@@ -312,7 +312,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
         """Add the features from the definition to the layers returned from the cloned item.
         Keyword arguments:
         layers - Dictionary containing the id of the layer and its corresponding arcgis.lyr.FeatureLayer
-        relationships - Dictionary containing the id of the layer and it's relationship definitions
+        relationships - Dictionary containing the id of the layer and its relationship definitions
         layer_field_mapping - field mapping if the case or name of field changed from the original service
         wkid -  The wkid for the spatial reference to create the features in"""
 
@@ -999,7 +999,6 @@ class _ApplicationDefinition(_TextItemDefinition):
         Keyword arguments:
         target - The instance of arcgis.gis.GIS (the portal) to clone the web map to
         folder - The folder to create the item in
-        extent - Default extent of the new application
         item_mapping - Dictionary containing mapping between new and old items.     
         """  
     
@@ -1655,11 +1654,11 @@ def _get_item_definitions(item, item_definitions):
                 try:
                     service = FeatureLayerCollection(service_url, source)               
                 except Exception:
-                    _add_message("Feature layer {0} is not a hosted feature service, it will not be cloned".format(service_url), 'Warning')
+                    _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
                     continue
 
                 if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
-                    _add_message("Feature layer {0} is not a hosted feature service, it will not be cloned".format(service_url), 'Warning')
+                    _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
                     continue
 
                 try:
@@ -2030,7 +2029,7 @@ def _add_relationship(origin_item, destination_item, rel_type):
     Keyword arguments:
     origin_item - The origin item
     destination_item - The destination item
-    direction - The direction of the relationship"""
+    rel_type - The relationship type"""
 
     postdata = {'f' : 'json'}
     postdata['originItemId'] = origin_item.id
