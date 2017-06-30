@@ -1,13 +1,15 @@
 # ago-clone-items
-Tools used to clone items between ArcGIS Online and ArcGIS Enterprise organizations.
+Clone items between ArcGIS Online and ArcGIS Enterprise organizations.
+
+This script and associated tool can be used to clone an item and it's dependencies to the same or another ArcGIS Organization. For example if you clone a hosted web application created using Web AppBuilder or a Configurable App Template, the script will find the web map that is used by that web application and all the hosted feature layers used in the web map. It will then clone all of these items to the new organization and swizzle the paths in the web map and web application to point to the new layers. This creates a completely disconnected copy of the application, map and layers in the organization.
+
+[Learn more](https://github.com/ArcGIS/ago-clone-items/wiki) about the supported item types, optional parameters and considerations for the script.
 
 ## Features
 
 * A [python module](clone_items.py) that can be used to clone items within an ArcGIS Online or ArcGIS Enterprise organization or between organizations.
-* A [python toolbox](CloneItems.pyt) that provides a geoprocessing tool that can be used to clone items from an ArcGIS organization to the active Portal within ArcGIS Pro.
 * An [example script](example.py) that demonstrates how you can clone items between ArcGIS organizations from a standalone script.
-
-[Learn more](https://github.com/ArcGIS/ago-clone-items/wiki)
+* A [python toolbox](CloneItems.pyt) that provides a geoprocessing tool that can be used to clone items from an ArcGIS organization to the active Portal within ArcGIS Pro.
 
 ## Requirements
 
