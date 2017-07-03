@@ -3,7 +3,7 @@ Clone items between ArcGIS Online and ArcGIS Enterprise organizations.
 
 This script and associated tool can be used to clone an item and its dependencies to the same or another ArcGIS Organization. For example if you clone a hosted web application created using Web AppBuilder or a Configurable App Template, the script will find the web map that is used by that web application and all the hosted feature layers used in the web map. It will then clone all of these items to the new organization and swizzle the paths in the web map and web application to point to the new layers. This creates a completely disconnected copy of the application, map and layers in the organization.
 
-[Learn more](https://github.com/ArcGIS/ago-clone-items/wiki) about the supported item types and considerations for the script.
+[Learn more](../../wiki) about the supported item types and considerations for the script.
 
 ## Features
 
@@ -27,7 +27,7 @@ This script and associated tool can be used to clone an item and its dependencie
      * Within ArcGIS Pro select Add Toolbox from the Insert tab > Toolbox menu and browse to the CloneItems.pyt.
      * From the Analysis tab click Tools
      * From the Geoprocessing pane search for 'Clone Items' and open the Clone Items tool.
-     * [Learn more](https://github.com/ArcGIS/ago-clone-items/wiki#clone-items-tool) about the tool and its parameters.
+     * [Learn more](../../wiki#clone-items-tool) about the tool and its parameters.
 
 ## Issues
 
