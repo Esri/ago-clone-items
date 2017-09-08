@@ -1492,16 +1492,17 @@ def clone(target, item, folder_name=None, existing_items=[]):
 
                         # Get any layer field mapping saved with the feature service
                         data = new_item.get_data()
-                        layers = []
-                        if 'layers' in data and data['layers'] is not None:
-                            layers += [layer for layer in data['layers']]
-                        if 'tables' in data and data['tables'] is not None:
-                            layers += [layer for layer in data['tables']]
-                        for layer in layers:
-                            if 'fieldMapping' in layer:
-                                for key, value in layer_id_mapping.items():
-                                    if value == layer['id']:
-                                        layer_field_mapping[key] = layer['fieldMapping']
+                        if data:
+                            layers = []
+                            if 'layers' in data and data['layers'] is not None:
+                                layers += [layer for layer in data['layers']]
+                            if 'tables' in data and data['tables'] is not None:
+                                layers += [layer for layer in data['tables']]
+                            for layer in layers:
+                                if 'fieldMapping' in layer:
+                                    for key, value in layer_id_mapping.items():
+                                        if value == layer['id']:
+                                            layer_field_mapping[key] = layer['fieldMapping']
                                         break
                 else:
                     layer_field_mapping = result[1]
