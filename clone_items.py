@@ -30,6 +30,7 @@ ITEM_EXTENT = None
 SPATIAL_REFERENCE = None
 ADD_TAGS = []
 REMOVE_TAGS = []
+TARGET_MUST_EXIST_TAG = 'target-must-exist'
 
 #region Group and Item Definition Classes
 
@@ -121,6 +122,8 @@ class _ItemDefinition(object):
         tags.extend(ADD_TAGS)
         expressions = [re.compile(x) for x in REMOVE_TAGS]
         item_properties['tags'] = [t for t in tags if all(not ex.match(t) for ex in expressions)]
+        if TARGET_MUST_EXIST_TAG in item_properties['tags']:
+            item_properties['tags'].remove(TARGET_MUST_EXIST_TAG)
 
         type_keywords.append('source-{0}'.format(self.info['id']))
         item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
@@ -1445,8 +1448,13 @@ def clone(target, item, folder_name=None, existing_items=[]):
             result = []
 
             new_item = _get_existing_item(existing_items, original_item)
-            if SEARCH_ORG_FOR_EXISTING_ITEMS and new_item is None:
-                new_item = _search_org_for_existing_item(target, original_item)
+            if new_item is None:
+                if TARGET_MUST_EXIST_TAG in original_item['tags']:
+                    new_item = _search_org_for_existing_item(target, original_item)
+                    if new_item is None:
+                        raise Exception("Failed to find {0} {1} in Organization".format(original_item['type'], original_item['title']))
+                elif SEARCH_ORG_FOR_EXISTING_ITEMS:
+                    new_item = _search_org_for_existing_item(target, original_item)
 
             if not new_item:                   
                 result = item_definition.clone(target, folder, item_mapping)
@@ -1480,17 +1488,28 @@ def clone(target, item, folder_name=None, existing_items=[]):
                     new_feature_service = FeatureLayerCollection.fromitem(new_item)    
                     new_layers = new_feature_service.layers + new_feature_service.tables
                     for new_layer in new_layers:
-                        layer_fields[new_layer.properties.id] = new_layer.properties.fields
-                                     
+                        layer_fields[new_layer.properties.id] = new_layer.properties.fields                
                     original_layers_definition = item_definition.layers_definition
                     original_layers = original_layers_definition['layers'] + original_layers_definition['tables']
-                    if len(new_layers) == len(original_layers):
-                        i = 0
+
+                    # Get a mapping between layer ids
+                    if len(original_layers) <= len(new_layers):
+                        original_layer_ids = [original_layer['id'] for original_layer in original_layers]
+                        new_layer_ids = [new_layer.properties['id'] for new_layer in new_layers]
+                        new_layer_names = [new_layer.properties['name'] for new_layer in new_layers]
                         for layer in original_layers:
-                            layer_id_mapping[layer['id']] = new_layers[i].properties['id']
-                            i += 1
+                            try:
+                                new_layer = new_layers[new_layer_names.index(layer['name'])]
+                                layer_id_mapping[layer['id']] = new_layer.properties['id']
+                                new_layer_ids.remove(new_layer.properties['id'])
+                                original_layer_ids.remove(layer['id'])
+                            except ValueError:
+                                pass
+                        for id in original_layer_ids:
+                            layer_id_mapping[id] = new_layer_ids.pop(0)
 
                         # Get any layer field mapping saved with the feature service
+                        field_mapping_not_found = [key for key, value in layer_id_mapping.items()]
                         data = new_item.get_data()
                         if data:
                             layers = []
@@ -1503,7 +1522,52 @@ def clone(target, item, folder_name=None, existing_items=[]):
                                     for key, value in layer_id_mapping.items():
                                         if value == layer['id']:
                                             layer_field_mapping[key] = layer['fieldMapping']
+                                            field_mapping_not_found.remove(key)
                                         break
+                        
+                        # If field mapping not saved with the service check for field name changes
+                        for id in field_mapping_not_found:
+                            field_mapping = {}            
+                            for layer in original_layers:
+                                if layer['id'] == id:
+                                    new_layer = next((l for l in new_layers if l.properties['id'] == layer_id_mapping[id]), None)
+                                    original_fields = layer['fields']
+                                    new_fields = new_layer.properties['fields']
+                                    new_fields_lower = [f['name'].lower() for f in new_fields]
+
+                                    if 'editFieldsInfo' in layer and layer['editFieldsInfo'] is not None:                            
+                                        if 'editFieldsInfo' in new_layer.properties and new_layer.properties['editFieldsInfo'] is not None:
+                                            for editor_field in ['creationDateField', 'creatorField', 'editDateField', 'editorField']:
+                                                original_editor_field_name = _deep_get(layer, 'editFieldsInfo', editor_field)
+                                                new_editor_field_name = _deep_get(new_layer.properties, 'editFieldsInfo', editor_field)
+                                                if original_editor_field_name !=  new_editor_field_name:
+                                                    if original_editor_field_name is not None and original_editor_field_name != "" and new_editor_field_name is not None and new_editor_field_name != "":
+                                                        field_mapping[original_editor_field_name] = new_editor_field_name
+
+                                    original_oid_field = _deep_get(layer, 'objectIdField')
+                                    new_oid_field = _deep_get(new_layer.properties, 'objectIdField')
+                                    if original_oid_field != new_oid_field:
+                                        if original_oid_field is not None and original_oid_field != "" and new_oid_field is not None and new_oid_field != "":
+                                            field_mapping[original_oid_field] = new_oid_field
+
+                                    original_globalid_field = _deep_get(layer, 'globalIdField')
+                                    new_globalid_field = _deep_get(new_layer.properties, 'globalIdField')
+                                    if original_globalid_field != new_globalid_field:
+                                        if original_globalid_field is not None and original_globalid_field != "" and new_globalid_field is not None and new_globalid_field != "":
+                                            field_mapping[original_globalid_field] = new_globalid_field
+
+                                    for field in original_fields:
+                                        if field['name'] in field_mapping:
+                                            continue
+                                        try:
+                                            new_field = new_fields[new_fields_lower.index(field['name'].lower())]
+                                            if field['name'] != new_field['name']:
+                                                field_mapping[field['name']] = new_field['name']
+                                        except ValueError:
+                                            pass    
+                                    break
+                            if len(field_mapping) > 0:
+                                layer_field_mapping[id] = field_mapping
                 else:
                     layer_field_mapping = result[1]
                     layer_id_mapping = result[2]  
@@ -1909,14 +1973,16 @@ def _get_extent_definition(extent):
     return extent
 
 def _search_org_for_existing_item(target, item):
-    """Test if an item with a given source tag already exists in the collection of items within a given folder. 
+    """Search for an item with a specific type keyword or tag. 
     This is used to determine if the item has already been cloned in the folder.
     Keyword arguments:
     target - The portal that items will be cloned to.
     item - The original item used to determine if it has already been cloned to the specified folder."""  
    
-    search_query = 'typekeywords:source-{0}'.format(item['id']) 
+    search_query = 'typekeywords:source-{0}'.format(item['id'])  
     items = target.content.search(search_query, max_items=100, outside_org=False)
+    search_query = 'tags:source-{0}'.format(item['id'])  
+    items.extend(target.content.search(search_query, max_items=100, outside_org=False))
     existing_item = None
     if len(items) > 0:
         existing_item = max(items, key=lambda x: x['created'])
