@@ -1352,6 +1352,78 @@ class _WorkforceProjectDefinition(_TextItemDefinition):
         except Exception as ex:
             raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
 
+class _ProMapDefinition(_ItemDefinition):
+    """
+    Represents the definition of an pro map within ArcGIS Online or Portal.
+    """
+
+    def __init__(self, info, map_json=None, map_name=None, data=None, sharing=None, thumbnail=None, portal_item=None):
+        self._map_json = map_json
+        self._map_name = map_name
+        super().__init__(info, data, sharing, thumbnail, portal_item)
+
+    @property
+    def map_json(self):
+        """Gets the json of the pro map"""
+        return copy.deepcopy(self._map_json)
+
+    @property
+    def map_name(self):
+        """Gets the name of the map file"""
+        return self._map_name
+
+    def clone(self, target, folder, item_mapping):
+        """Clone the pro map in the target organization.
+        Keyword arguments:
+        target - The instance of arcgis.gis.GIS (the portal) to clone the workforce project to
+        folder - The folder to create the item in
+        item_mapping - Dictionary containing mapping between new and old items.     
+        """  
+
+        try:
+            new_item = None
+            original_item = self.info
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                map_json = self.map_json
+                data = os.path.join(temp_dir, self.map_name)
+
+                data_connections = []
+                layer_definitions = _deep_get(map_json, 'layerDefinitions')
+                for layer_definition in layer_definitions:
+                    data_connection = _deep_get(layer_definition, 'featureTable', 'dataConnection')
+                    if data_connection is not None:
+                        data_connections.append(data_connection)
+        
+                table_definitions = _deep_get(map_json, 'tableDefinitions')
+                for table_definition in table_definitions:
+                    data_connection = _deep_get(table_definition, 'dataConnection')
+                    if data_connection is not None:
+                        data_connections.append(data_connection)
+
+                for data_connection in data_connections:
+                    if 'workspaceFactory' in data_connection and data_connection['workspaceFactory'] == 'FeatureService':
+                        if 'workspaceConnectionString' in data_connection and data_connection['workspaceConnectionString'] is not None:
+                            feature_service_url = data_connection['workspaceConnectionString'][4:]
+                            for original_url in item_mapping['Feature Services']:
+                                if _compare_url(feature_service_url, original_url):
+                                    new_service = item_mapping['Feature Services'][original_url]
+                                    layer_id = int(data_connection['dataset'])
+                                    new_id = new_service['layer_id_mapping'][layer_id]
+                                    data_connection['workspaceConnectionString'] = "URL={0}".format(new_service['url'])
+                                    data_connection['dataset'] = new_id
+                
+                with open(data, 'w') as file:
+                    file.write(json.dumps(map_json))
+                
+                self._data = data
+                return super().clone(target, folder, item_mapping)
+        
+        except Exception as ex:
+            if isinstance(ex, _ItemCreateException):
+                raise
+            raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
+
 class _ItemCreateException(Exception):
     """
     Exception raised during the creation of new items, used to clean-up any partially created items in the process.
@@ -1840,6 +1912,49 @@ def _get_item_definitions(item, item_definitions):
         for related_item in item_definition.related_items:
             _get_item_definitions(source.content.get(related_item['id']), item_definitions)
 
+    # If the item is a form find the feature service that supports it
+    elif item['type'] == 'Pro Map':
+        item_definition = _get_item_definition(item)
+        item_definitions.append(item_definition)
+
+        map_json = item_definition.map_json
+        data_connections = []
+        layer_definitions = _deep_get(map_json, 'layerDefinitions')
+        for layer_definition in layer_definitions:
+            data_connection = _deep_get(layer_definition, 'featureTable', 'dataConnection')
+            if data_connection is not None:
+                data_connections.append(data_connection)
+        
+        table_definitions = _deep_get(map_json, 'tableDefinitions')
+        for table_definition in table_definitions:
+            data_connection = _deep_get(table_definition, 'dataConnection')
+            if data_connection is not None:
+                data_connections.append(data_connection)
+
+        for data_connection in data_connections:
+            if 'workspaceFactory' in data_connection and data_connection['workspaceFactory'] == 'FeatureService':
+                if 'workspaceConnectionString' in data_connection and data_connection['workspaceConnectionString'] is not None:
+                    service_url = data_connection['workspaceConnectionString'][4:]
+                    feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == service_url), None)
+                    if not feature_service:
+                        try:
+                            service = FeatureLayerCollection(service_url, source)               
+                        except Exception:
+                            _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
+                            continue
+
+                        if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
+                            _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
+                            continue
+
+                        try:
+                            item_id = service.properties['serviceItemId']
+                            feature_service = source.content.get(item_id)
+                        except RuntimeError:
+                            _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
+                            raise
+                        _get_item_definitions(feature_service, item_definitions)
+
     # All other types we no longer need to recursively look for related items
     else:
         item_definition = _get_item_definition(item)
@@ -1919,6 +2034,15 @@ def _get_item_definition(item):
     # If the item is a feature collection get the FeatureCollectionDefintion
     elif item['type'] == 'Feature Collection':
         return _FeatureCollectionDefinition(dict(item), data=item.get_data(), thumbnail=None, portal_item=item)
+
+    # If the item is a pro map get the ProMapDefintion
+    elif item['type'] == 'Pro Map':
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pro_map = item.download(temp_dir)
+            
+            with open(pro_map, 'r') as file:
+                map_json = json.loads(file.read())
+                return _ProMapDefinition(dict(item), map_json=map_json, map_name=os.path.basename(pro_map), data=None, thumbnail=None, portal_item=item)
 
     # For all other types get the corresponding definition
     else:
