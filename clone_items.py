@@ -784,13 +784,20 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             _check_cancel_status(new_item)
 
             # Add the relationships back to the layers
+            relationship_field_mapping = {}
             if len(relationships) > 0 and self.is_view == False:
                 for layer_id in relationships:
                     for relationship in relationships[layer_id]:
                         if layer_id in layer_field_mapping:
                             field_mapping = layer_field_mapping[layer_id]
                             if relationship['keyField'] in field_mapping:
-                                relationship['keyField'] = field_mapping[relationship['keyField']]         
+                                relationship['keyField'] = field_mapping[relationship['keyField']]    
+                        related_table_id = relationship['relatedTableId']
+                        if related_table_id in layer_field_mapping:
+                            field_mapping = layer_field_mapping[related_table_id]
+                            if layer_id not in relationship_field_mapping:
+                                relationship_field_mapping[layer_id] = {}                
+                            relationship_field_mapping[layer_id][relationship['id']] = field_mapping     
 
                 relationships_copy = copy.deepcopy(relationships)
                 for layer_id in relationships_copy:
@@ -836,41 +843,20 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             if data and 'tables' in data and data['tables'] is not None:
                 layers += [layer for layer in data['tables']]
 
-            # Clear out any field mapping that may have been previously persisted on the item
-            for layer in layers:
-                if 'fieldMapping' in layer:
-                    del layer['fieldMapping']
+            # Update any pop-up, labeling or renderer field references
+            for layer_id in layer_field_mapping:
+                layer = next((layer for layer in layers if layer['id'] == layer_id), None)
+                if layer:
+                    _update_layer_fields(layer, layer_field_mapping[layer_id]) 
 
-            # Update field names and persist field mapping if required
-            if len(layer_field_mapping) > 0:
-                if not data:
-                    data = {}
-
-                for layer_id in layer_field_mapping:
-                    layer = next((layer for layer in layers if layer['id'] == layer_id), None)
-                    if layer:
-                        _update_layer_fields(layer, layer_field_mapping[layer_id]) 
-                        layer['fieldMapping'] = layer_field_mapping[layer_id]
-                    else:
-                        layer = {'id' : layer_id, 'fieldMapping' : layer_field_mapping[layer_id]}
-                        is_table = next((table for table in feature_service.tables if table.properties.id == layer_id), None) is not None
-                        if is_table:
-                            if 'tables' not in data or data['tables'] is None:
-                                data['tables'] = []
-                            data['tables'].append(layer)
-                        else:
-                            if 'layers' not in data or data['layers'] is None:
-                                data['layers'] = []
-                            data['layers'].append(layer)
-            
+            for layer_id in relationship_field_mapping:
+                layer = next((layer for layer in layers if layer['id'] == layer_id), None)
+                if layer:
+                    _update_layer_related_fields(layer, relationship_field_mapping[layer_id]) 
+ 
             # Update the layer id
-            layers = []
-            if data and 'layers' in data and data['layers'] is not None:
-                layers += [layer for layer in data['layers']]
-            if data and 'tables' in data and data['tables'] is not None:
-                layers += [layer for layer in data['tables']]
             for layer in layers:   
-                layer['id'] = layer_id_mapping[layer['id']]
+                layer['id'] = layer_id_mapping[layer['id']]      
 
             # Add GPS Metadata field infos to the pop-up of the layer
             if ADD_GPS_METADATA_FIELDS:
@@ -916,7 +902,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             if COPY_DATA and not self.is_view:
                 self._add_features(new_layers, relationships, layer_field_mapping, feature_service.properties['spatialReference']['wkid'])
 
-            return [new_item, layer_field_mapping, layer_id_mapping, layer_fields]
+            return [new_item, layer_field_mapping, layer_id_mapping, layer_fields, relationship_field_mapping]
         except _CustomCancelException as ex:
             raise ex
         except Exception as ex:
@@ -966,6 +952,8 @@ class _WebMapDefinition(_TextItemDefinition):
                         layer['itemId'] = new_service['id']
                         if layer_id in new_service['layer_field_mapping']:
                             _update_layer_fields(layer, new_service['layer_field_mapping'][layer_id])
+                        if layer_id in new_service['relationship_field_mapping']:
+                            _update_layer_related_fields(layer, new_service['relationship_field_mapping'][layer_id])
                         
                         # If layer contains gps metadata fields, but are not in the popup definition add them
                         if ADD_GPS_METADATA_FIELDS and new_id in new_service['layer_fields']:
@@ -1697,6 +1685,7 @@ def clone(target, item, folder_name=None, existing_items=[]):
                 layer_field_mapping = {}
                 layer_id_mapping = {}
                 layer_fields = {}
+                relationship_field_mapping = {}
 
                 if not new_item_created:
                     new_feature_service = FeatureLayerCollection.fromitem(new_item)    
@@ -1706,7 +1695,7 @@ def clone(target, item, folder_name=None, existing_items=[]):
                     original_layers_definition = item_definition.layers_definition
                     original_layers = original_layers_definition['layers'] + original_layers_definition['tables']
 
-                    # Get a mapping between layer ids
+                    # Get a mapping between layer ids, fields and related fields
                     if len(original_layers) <= len(new_layers):
                         original_layer_ids = [original_layer['id'] for original_layer in original_layers]
                         new_layer_ids = [new_layer.properties['id'] for new_layer in new_layers]
@@ -1722,29 +1711,11 @@ def clone(target, item, folder_name=None, existing_items=[]):
                         for id in original_layer_ids:
                             layer_id_mapping[id] = new_layer_ids.pop(0)
 
-                        # Get any layer field mapping saved with the feature service
-                        field_mapping_not_found = [key for key, value in layer_id_mapping.items()]
-                        data = new_item.get_data()
-                        if data:
-                            layers = []
-                            if 'layers' in data and data['layers'] is not None:
-                                layers += [layer for layer in data['layers']]
-                            if 'tables' in data and data['tables'] is not None:
-                                layers += [layer for layer in data['tables']]
-                            for layer in layers:
-                                if 'fieldMapping' in layer:
-                                    for key, value in layer_id_mapping.items():
-                                        if value == layer['id']:
-                                            layer_field_mapping[key] = layer['fieldMapping']
-                                            field_mapping_not_found.remove(key)
-                                        break
-                        
-                        # If field mapping not saved with the service check for field name changes
-                        for id in field_mapping_not_found:
+                        for original_id, new_id in layer_id_mapping.items():
                             field_mapping = {}            
                             for layer in original_layers:
-                                if layer['id'] == id:
-                                    new_layer = next((l for l in new_layers if l.properties['id'] == layer_id_mapping[id]), None)
+                                if layer['id'] == original_id:
+                                    new_layer = next((l for l in new_layers if l.properties['id'] == new_id), None)
                                     original_fields = _deep_get(layer, 'fields')
                                     new_fields = _deep_get(new_layer.properties, 'fields')
                                     if new_fields is None or original_fields is None:
@@ -1783,12 +1754,25 @@ def clone(target, item, folder_name=None, existing_items=[]):
                                             pass    
                                     break
                             if len(field_mapping) > 0:
-                                layer_field_mapping[id] = field_mapping
+                                layer_field_mapping[original_id] = field_mapping
+
+                        for layer in original_layers:
+                            layer_id = layer['id']
+                            if 'relationships' in layer and layer['relationships'] is not None:
+                                for relationship in layer['relationships']:
+                                    related_table_id = relationship['relatedTableId']
+                                if related_table_id in layer_field_mapping:
+                                    if layer_id not in relationship_field_mapping:
+                                        relationship_field_mapping[layer_id] = {}
+                                    field_mapping = layer_field_mapping[related_table_id]
+                                    relationship_field_mapping[layer_id][relationship['id']] = field_mapping
+
                 else:
                     layer_field_mapping = result[1]
                     layer_id_mapping = result[2]  
                     layer_fields = result[3]
-                item_mapping['Feature Services'][original_item['url']] = {'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping, 'layer_id_mapping' : layer_id_mapping, 'layer_fields' : layer_fields}           
+                    relationship_field_mapping = result[4]
+                item_mapping['Feature Services'][original_item['url']] = {'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping, 'layer_id_mapping' : layer_id_mapping, 'layer_fields' : layer_fields, 'relationship_field_mapping' : relationship_field_mapping}           
 
         # Update form data
         for form in [i for i in item_definitions if isinstance(i, _FormDefinition)]:
@@ -2667,6 +2651,57 @@ def _update_layer_fields(layer, field_mapping):
                                 param['fieldName'] = field_mapping[param['fieldName']]
         if 'parameterizedExpression' in layer['definitionEditor'] and layer['definitionEditor']['parameterizedExpression'] is not None:
             layer['definitionEditor']['parameterizedExpression'] = _find_and_replace_fields(layer['definitionEditor']['parameterizedExpression'], field_mapping)
+
+def _update_layer_related_fields(layer, relationship_field_mapping):
+    """Perform a find and replace for field names in a layer definition.
+    Keyword arguments:
+    layer - The layer to search and replace fields names
+    field_mapping -  A dictionary containing the pairs of original field names and new field names"""
+   
+    for id, field_mapping in relationship_field_mapping.items():
+        field_prefix = "relationships/{0}/".format(id)
+
+        if 'popupInfo' in layer and layer['popupInfo'] is not None:
+            if 'title' in layer['popupInfo'] and layer['popupInfo']['title'] is not None:
+                results = re.findall("{{{0}(.*?)}}".format(field_prefix), layer['popupInfo']['title'])
+                for result in results:
+                    if result in field_mapping:
+                        layer['popupInfo']['title'] = str(layer['popupInfo']['title']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+                
+            if 'description' in layer['popupInfo'] and layer['popupInfo']['description'] is not None:
+                results = re.findall("{{{0}(.*?)}}".format(field_prefix), layer['popupInfo']['description'])
+                for result in results:
+                    if result in field_mapping:
+                        layer['popupInfo']['description'] = str(layer['popupInfo']['description']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+
+            if 'fieldInfos' in layer['popupInfo'] and layer['popupInfo']['fieldInfos'] is not None:
+                for field in layer['popupInfo']['fieldInfos']:
+                    if field['fieldName'].startswith(field_prefix) and field['fieldName'][len(field_prefix):] in field_mapping:
+                        field['fieldName'] = "{0}{1}".format(field_prefix, field_mapping[field['fieldName'][len(field_prefix):]])
+
+            if 'mediaInfos' in layer['popupInfo'] and layer['popupInfo']['mediaInfos'] is not None:
+                for media_info in layer['popupInfo']['mediaInfos']:
+                    if 'title' in media_info and media_info['title'] is not None:
+                        results = re.findall("{{{0}(.*?)}}".format(field_prefix), media_info['title'])
+                        for result in results:
+                            if result in field_mapping:
+                                media_info['title'] = str(media_info['title']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+                    if 'caption' in media_info and media_info['caption'] is not None:
+                        results = re.findall("{{{0}(.*?)}}".format(field_prefix), media_info['caption'])
+                        for result in results:
+                            if result in field_mapping:
+                                media_info['caption'] = str(media_info['caption']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+                    if 'normalizeField' in media_info and media_info['normalizeField'] is not None:
+                        if media_info['normalizeField'].startswith(field_prefix) and media_info['normalizeField'] in field_mapping:
+                            media_info['normalizeField'] = "{0}{1}".format(field_prefix, field_mapping[media_info['normalizeField'][len(field_prefix):]])
+                    if 'fields' in media_info and media_info['fields'] is not None:
+                        for field in media_info['fields']:
+                            fields = []
+                            if field.startswith(field_prefix) and field[len(field_prefix):] in field_mapping:
+                                fields.append("{0}{1}".format(field_prefix, field_mapping[field[len(field_prefix):]]))
+                            else:
+                                fields.append(field)
+                        media_info['fields'] = fields
 
 def _zip_dir(path, zip_file, include_root=True):
     """Zip a directory of files.
