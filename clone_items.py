@@ -1415,9 +1415,10 @@ class _ProMapDefinition(_ItemDefinition):
         try:
             new_item = None
             original_item = self.info
+            mapx = self.data
 
             map_json = None
-            with open(self.data, 'r') as file:
+            with open(mapx, 'r') as file:
                 map_json = json.loads(file.read())
 
             data_connections = []
@@ -1447,8 +1448,12 @@ class _ProMapDefinition(_ItemDefinition):
                                 data_connection['workspaceConnectionString'] = "URL={0}".format(new_service['url'])
                                 data_connection['dataset'] = new_id
                 
-            with open(self.data, 'w') as file:
+            new_mapx_dir = os.path.join(os.path.dirname(mapx), 'new_mapx')
+            os.makedirs(new_mapx_dir)
+            new_mapx = os.path.join(new_mapx_dir, os.path.basename(mapx))
+            with open(new_mapx, 'w') as file:
                 file.write(json.dumps(map_json))
+            self._data = new_mapx
                 
             return super().clone(target, folder, item_mapping)
         
@@ -1456,6 +1461,11 @@ class _ProMapDefinition(_ItemDefinition):
             if isinstance(ex, _ItemCreateException):
                 raise
             raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
+        finally:
+            self._data = mapx
+            new_mapx_dir = os.path.join(os.path.dirname(mapx), 'new_mapx')
+            if os.path.exists(new_mapx_dir):
+                shutil.rmtree(new_mapx_dir)
 
 class _ProProjectPackageDefinition(_ItemDefinition):
     """
@@ -1472,32 +1482,67 @@ class _ProProjectPackageDefinition(_ItemDefinition):
 
         try:
             new_item = None
+            aprx = None
+            map = None
+            maps = None
+            layers = None
+            lyr = None
             original_item = self.info
+            ppkx = self.data
 
             try:
-                import arcpy
-                ppkx = self.data
-                p20_dir = os.path.join(os.path.dirname(ppkx), 'extract', 'p20')
-                if os.path.exists(p20_dir):
-                    aprx_files = [f for f in os.listdir(p20_dir) if f.endswith('.aprx')]
-                    if len(aprx_files) > 0:
-                        aprx = arcpy.mp.ArcGISProject(os.path.join(p20_dir, aprx_files[0]))
-                        for original_url, new_service in item_mapping['Feature Services'].items():
-                            for original_id, new_id in new_service['layer_id_mapping'].items():
-                                old_connection = {'connection_info': {'url': original_url}, 'workspace_factory': 'FeatureService', 'dataset': str(original_id)}
-                                new_connection = {'connection_info': {'url': new_service['url']}, 'workspace_factory': 'FeatureService', 'dataset': str(new_id)}
-                                aprx.updateConnectionProperties(old_connection, new_connection, True, False)
-                        aprx.save()
+                import arcpy          
+                
+                extract_dir = os.path.join(os.path.dirname(ppkx), 'extract')
+                if not os.path.exists(extract_dir):
+                    os.makedirs(extract_dir)
+                    arcpy.ExtractPackage_management(ppkx, extract_dir)
+
+                project_folder = 'p20'
+                version = float(arcpy.GetInstallInfo()['Version'])
+                if version < 2.0:
+                    project_folder = 'p12'
+
+                project_dir = os.path.join(extract_dir, project_folder)
+                if os.path.exists(project_dir):
+                    aprx_files = [f for f in os.listdir(project_dir) if f.endswith('.aprx')]
+                    if len(aprx_files) == 1:
+                        aprx_file = os.path.join(project_dir, aprx_files[0])
+                        aprx = arcpy.mp.ArcGISProject(aprx_file)
+                        maps = aprx.listMaps()
+                        for map in maps:
+                            layers = [l for l in map.listLayers() if l.supports('connectionProperties')]
+                            layers.extend(map.listTables())
+                            for lyr in layers:
+                                connection_properties = lyr.connectionProperties
+                                workspace_factory = _deep_get(connection_properties, 'workspace_factory')
+                                service_url = _deep_get(connection_properties, 'connection_info', 'url')
+                                if workspace_factory == 'FeatureService' and service_url is not None:
+                                    for original_url in item_mapping['Feature Services']:
+                                        if _compare_url(service_url, original_url):
+                                            new_service = item_mapping['Feature Services'][original_url]
+                                            layer_id = int(connection_properties['dataset'])
+                                            new_id = new_service['layer_id_mapping'][layer_id]
+                                            new_connection_properties = copy.deepcopy(connection_properties)
+                                            new_connection_properties['connection_info']['url'] = new_service['url']
+                                            new_connection_properties['dataset'] = str(new_id)
+                                            lyr.updateConnectionProperties(connection_properties, new_connection_properties)
+                        aprx.save()                        
 
                         additional_files = None
-                        common_data = os.path.join(os.path.dirname(ppkx), 'extract', 'common_data')
-                        if os.path.exists(common_data):
-                            additional_files = ','.join([os.path.join(common_data, f) for f in os.listdir(common_data)])
+                        user_data = os.path.join(os.path.dirname(ppkx), 'extract', 'commondata', 'userdata')
+                        if os.path.exists(user_data):
+                            additional_files = [os.path.join(user_data, f) for f in os.listdir(user_data)]
 
                         new_package_dir = os.path.join(os.path.dirname(ppkx), 'new_package')
                         os.makedirs(new_package_dir)
                         new_package = os.path.join(new_package_dir, os.path.basename(ppkx))
-                        arcpy.management.PackageProject(os.path.join(p20_dir, aprx_files[0]), new_package, "INTERNAL", "PROJECT_PACKAGE", "DEFAULT", "ALL", additional_files, original_item['snippet'], ','.join(original_item['tags']), "ALL")
+                        item_properties = self._get_item_properties()
+                        description = original_item['title']
+                        if item_properties['snippet'] is not None:
+                            description = item_properties['snippet']
+
+                        arcpy.management.PackageProject(aprx_file, new_package, "INTERNAL", "PROJECT_PACKAGE", "DEFAULT", "ALL", additional_files, description, item_properties['tags'], "ALL")
                         self._data = new_package
 
             except ImportError:
@@ -1509,6 +1554,15 @@ class _ProProjectPackageDefinition(_ItemDefinition):
             if isinstance(ex, _ItemCreateException):
                 raise
             raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
+        finally:
+            del aprx, map, maps, layers, lyr
+            self._data = ppkx
+            extract_dir = os.path.join(os.path.dirname(ppkx), 'extract')
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+            new_package_dir = os.path.join(os.path.dirname(ppkx), 'new_package')
+            if os.path.exists(new_package_dir):
+                shutil.rmtree(new_package_dir)
 
 class _ItemCreateException(Exception):
     """
@@ -2065,11 +2119,18 @@ def _get_item_definitions(item, item_definitions):
                 os.makedirs(extract_dir)
 
             arcpy.ExtractPackage_management(ppkx, extract_dir)
-            p20_dir = os.path.join(extract_dir, 'p20')
-            if os.path.exists(p20_dir):
-                aprx_files = [f for f in os.listdir(p20_dir) if f.endswith('.aprx')]
-                if len(aprx_files) > 0:
-                    aprx = arcpy.mp.ArcGISProject(os.path.join(p20_dir, aprx_files[0]))
+            
+            project_folder = 'p20'
+            version = float(arcpy.GetInstallInfo()['Version'])
+            if version < 2.0:
+                project_folder = 'p12'
+
+            project_dir = os.path.join(extract_dir, project_folder)
+            if os.path.exists(project_dir):
+                aprx_files = [f for f in os.listdir(project_dir) if f.endswith('.aprx')]
+                if len(aprx_files) == 1:
+                    aprx_file = os.path.join(project_dir, aprx_files[0])
+                    aprx = arcpy.mp.ArcGISProject(aprx_file)
                     maps = aprx.listMaps()
                     for map in maps:
                         layers = [l for l in map.listLayers() if l.supports('connectionProperties')]
