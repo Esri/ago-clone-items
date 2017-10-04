@@ -1761,11 +1761,11 @@ def clone(target, item, folder_name=None, existing_items=[]):
                             if 'relationships' in layer and layer['relationships'] is not None:
                                 for relationship in layer['relationships']:
                                     related_table_id = relationship['relatedTableId']
-                                if related_table_id in layer_field_mapping:
-                                    if layer_id not in relationship_field_mapping:
-                                        relationship_field_mapping[layer_id] = {}
-                                    field_mapping = layer_field_mapping[related_table_id]
-                                    relationship_field_mapping[layer_id][relationship['id']] = field_mapping
+                                    if related_table_id in layer_field_mapping:
+                                        if layer_id not in relationship_field_mapping:
+                                            relationship_field_mapping[layer_id] = {}
+                                        field_mapping = layer_field_mapping[related_table_id]
+                                        relationship_field_mapping[layer_id][relationship['id']] = field_mapping
 
                 else:
                     layer_field_mapping = result[1]
