@@ -1118,6 +1118,15 @@ class _ApplicationDefinition(_TextItemDefinition):
                             field_mapping = item_mapping['Feature Services'][service]['layer_field_mapping'][layer_id]
                             app_json_text = _find_and_replace_fields(app_json_text, field_mapping)
 
+                # Replace any references to the original org url with the target org url. Used to re-point item resource references
+                if original_item['url'] is not None:
+                    url = original_item['url']
+                    find_string = "/apps/"
+                    index = url.find(find_string)
+                    if index != -1:
+                        source_org_url = url[:index+1]
+                        app_json_text = re.sub(source_org_url, org_url, app_json_text, 0, re.IGNORECASE)
+
                 item_properties['text'] = app_json_text
 
             # Add the application to the target portal
@@ -1128,6 +1137,22 @@ class _ApplicationDefinition(_TextItemDefinition):
                     os.makedirs(temp_dir)
                 thumbnail = self.portal_item.download_thumbnail(temp_dir)
             new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+
+            # Add the resources to the new item
+            if self.portal_item:
+                resources = self.portal_item.resources
+                resource_list = resources.list()
+                if len(resource_list) > 0:
+                    resources_dir = os.path.join(_TEMP_DIR.name, original_item['id'], 'resources')
+                    if not os.path.exists(resources_dir):
+                        os.makedirs(resources_dir)
+                    for resource in resource_list:
+                        resource_path = resources.get(resource['resource'], False, resources_dir)
+                        folder_name = None
+                        resource_name = resource['resource']
+                        if len(resource_name.split('/')) == 2:
+                            folder_name, resource_name = resource_name.split('/')
+                        new_item.resources.add(resource_path, folder_name, resource_name)
 
             # Update the url of the item to point to the new portal and new id of the application if required
             if original_item['url'] is not None:
