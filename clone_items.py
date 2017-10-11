@@ -647,18 +647,20 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             # Explicitly add layers first and then tables, otherwise sometimes json.dumps() reverses them and this effects the output service
             feature_service = FeatureLayerCollection.fromitem(new_item)
             feature_service_admin = feature_service.manager
+            layers = []
+            tables = []
             if len(layers_definition['layers']) > 0:
-                add_to_definition = {'layers' : copy.deepcopy(layers_definition['layers'])}
+                layers = copy.deepcopy(layers_definition['layers'])
                 if self.is_view:
-                    for layer in add_to_definition['layers']:
+                    for layer in layers:
                         del layer['fields']
-                feature_service_admin.add_to_definition(add_to_definition)
             if len(layers_definition['tables']) > 0:
-                add_to_definition = {'tables' : copy.deepcopy(layers_definition['tables'])}
+                tables = copy.deepcopy(layers_definition['tables'])
                 if self.is_view:
-                    for table in add_to_definition['tables']:
+                    for table in tables:
                         del table['fields']
-                feature_service_admin.add_to_definition(add_to_definition)
+            definition = '{{"layers" : {0}, "tables" : {1}}}'.format(json.dumps(layers), json.dumps(tables))
+            _add_to_definition(feature_service_admin, definition)
 
             # Check if tool has been canceled, raise exception with new_item so it can be cleaned up
             _check_cancel_status(new_item)
@@ -2420,6 +2422,22 @@ def _create_service(target, service_type, create_params, is_view, folder):
     if resp and resp.get('success'):
         return target.content.get(resp['itemId'])
     return None
+
+def _add_to_definition(feature_layer_manager, definition):
+    """Create a new service.
+    Keyword arguments:
+    feature_layer_manager - The instance of FeatureLayerManager of the service to edit
+    definition - The definition as a string to add to the service"""
+    
+    params = {
+        "f": "json",
+        "addToDefinition": definition,
+    }
+    u_url = feature_layer_manager._url + "/addToDefinition"
+
+    res = feature_layer_manager._con.post(u_url, params)
+    feature_layer_manager.refresh()
+    return res
 
 def _get_related_items(item, rel_type, direction="forward"):
     """Get the related items for a given item.
