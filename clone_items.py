@@ -1068,12 +1068,11 @@ class _ApplicationDefinition(_TextItemDefinition):
                         if 'geometryService' in app_json and 'geometry' in target.properties['helperServices']:
                             app_json['geometryService'] = target.properties['helperServices']['geometry']['url']
 
-                    elif original_item['type'] == "Operation View": #Operations Dashboard
+                    elif original_item['type'] in ["Operation View", "Dashboard"]: #Operations Dashboard
                         if 'widgets' in app_json:
                             for widget in app_json['widgets']:
                                 if widget['type'] == 'mapWidget':
                                     widget['mapId'] = item_mapping['Item IDs'][widget['mapId']]
-                                    break
 
                     else: #Configurable Application Template
                         if 'folderId' in app_json:
@@ -1082,7 +1081,13 @@ class _ApplicationDefinition(_TextItemDefinition):
                             if 'group' in app_json['values']:
                                 app_json['values']['group'] = item_mapping['Group IDs'][app_json['values']['group']]
                             if 'webmap' in app_json['values']:
-                                app_json['values']['webmap'] = item_mapping['Item IDs'][app_json['values']['webmap']]
+                                if isinstance(app_json['values']['webmap'], list):
+                                    new_webmap_ids = []
+                                    for webmap_id in app_json['values']['webmap']:
+                                        new_webmap_ids.append(item_mapping['Item IDs'][webmap_id])
+                                    app_json['values']['webmap'] = new_webmap_ids
+                                else:
+                                    app_json['values']['webmap'] = item_mapping['Item IDs'][app_json['values']['webmap']]
                         if self.source_app_title is not None:
                             search_query = 'title:"{0}" AND owner:{1} AND type:Web Mapping Application'.format(self.source_app_title, "esri_en") 
                             search_items = target.content.search(search_query, max_items=100, outside_org=True)
@@ -1882,27 +1887,26 @@ def _get_item_definitions(item, item_definitions):
                 item_definition.sharing['groups'].append(group_id)
 
     # If the item is an application or dashboard find the web map or group that the application referencing
-    elif item['type'] in ['Web Mapping Application', 'Operation View']:
+    elif item['type'] in ['Web Mapping Application', 'Operation View', 'Dashboard']:
         item_definition = _get_item_definition(item)
         item_definitions.append(item_definition)
    
-        webmap_id = None
+        webmap_ids = []
         app_json = item_definition.data 
         if app_json is not None:     
             if 'Story Map' in item['typeKeywords'] or 'Story Maps' in item['typeKeywords']:
-                webmap_id = None
+                webmap_ids = []
 
-            elif item['type'].lower() == "operation view": #Operations Dashboard
+            elif item['type'] in ["Operation View", "Dashboard"]: #Operations Dashboard
                 if 'widgets' in app_json:
                     for widget in app_json['widgets']:
                         if widget['type'] == 'mapWidget':
-                            webmap_id = widget['mapId']
-                            break
+                            webmap_ids.append(widget['mapId'])
 
             elif "Web AppBuilder" in item['typeKeywords']: #Web AppBuilder
                 if 'map' in app_json:
                     if 'itemId' in app_json['map']:
-                        webmap_id = app_json['map']['itemId']
+                        webmap_ids.append(app_json['map']['itemId'])
 
             else: #Configurable Application Template
                 if 'values' in app_json:
@@ -1916,9 +1920,12 @@ def _get_item_definitions(item, item_definitions):
                         _get_item_definitions(group, item_definitions)
 
                     if 'webmap' in app_json['values']:
-                        webmap_id = app_json['values']['webmap']
+                        if isinstance(app_json['values']['webmap'], list):
+                            webmap_ids.extend(app_json['values']['webmap'])
+                        else:
+                            webmap_ids.append(app_json['values']['webmap'])
         
-        if webmap_id:
+        for webmap_id in webmap_ids:
             try:
                 webmap = source.content.get(webmap_id)
             except RuntimeError:
@@ -2194,7 +2201,7 @@ def _get_item_definition(item):
     """  
        
     # If the item is an application or dashboard get the ApplicationDefinition
-    if item['type'] in ['Web Mapping Application', 'Operation View']:
+    if item['type'] in ['Web Mapping Application', 'Operation View', 'Dashboard']:
         app_json = None
         source_app_title = None
         update_url = False
