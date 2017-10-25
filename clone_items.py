@@ -1037,6 +1037,7 @@ class _ApplicationDefinition(_TextItemDefinition):
             new_item = None
             original_item = self.info
             org_url = _get_org_url(target)
+            is_web_appbuilder = False
 
             # Get the item properties from the original application which will be applied when the new item is created
             item_properties = self._get_item_properties()
@@ -1052,6 +1053,7 @@ class _ApplicationDefinition(_TextItemDefinition):
 
                 else:
                     if "Web AppBuilder" in original_item['typeKeywords']: #Web AppBuilder
+                        is_web_appbuilder = True
                         if 'portalUrl' in app_json:
                             app_json['portalUrl'] = org_url
                         if 'map' in app_json:
@@ -1173,6 +1175,13 @@ class _ApplicationDefinition(_TextItemDefinition):
                     url = '{0}{1}'.format(url[:index + len(find_string)], new_item.id)
                 item_properties = {'url' : url}
                 new_item.update(item_properties)
+
+            # Add a code attachment if the application is Web AppBuilder so that it can be downloaded
+            if is_web_appbuilder:
+                url = '{0}sharing/rest/content/items/{1}/package'.format(org_url[org_url.find('://') + 1:], new_item['id'])
+                code_attachment_properties = {'title' : new_item['title'], 'type' : 'Code Attachment', 'typeKeywords' : 'Code,Web Mapping Application,Javascript',
+                                                'relationshipType' : 'WMA2Code', 'originItemId' : new_item['id'], 'url' : url }
+                target.content.add(item_properties=code_attachment_properties, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
@@ -2180,6 +2189,10 @@ def _get_item_definitions(item, item_definitions):
             
         except ImportError:
             pass
+
+    # If the item is a code attachment ignore it
+    elif item['type'] == 'Code Attachment':
+        pass
 
     # All other types we no longer need to recursively look for related items
     else:
