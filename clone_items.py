@@ -520,8 +520,11 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             # Get the definition of the original feature service
             service_definition = self.service_definition
 
-            # Modify the definition before passing to create the new service             
-            name = self._get_unique_name(target, original_item['name'], item_mapping, False)       
+            # Modify the definition before passing to create the new service   
+            name = original_item['name']
+            if name is None:
+                name = os.path.basename(os.path.dirname(original_item['url']))
+            name = self._get_unique_name(target, name, item_mapping, False)       
             service_definition['name'] = name
     
             for key in ['layers', 'tables', 'fullExtent']:
@@ -1961,23 +1964,9 @@ def _get_item_definitions(item, item_definitions):
             service_url = os.path.dirname(layer['url'])
             feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == service_url), None)
             if not feature_service:
-                try:
-                    service = FeatureLayerCollection(service_url, source)               
-                except Exception:
-                    _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                    continue
-
-                if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
-                    _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                    continue
-
-                try:
-                    item_id = service.properties['serviceItemId']
-                    feature_service = source.content.get(item_id)
-                except RuntimeError:
-                    _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
-                    raise
-                _get_item_definitions(feature_service, item_definitions)
+                feature_service = _get_feature_service_related_item(service_url, source)
+                if feature_service:
+                    _get_item_definitions(feature_service, item_definitions)
 
         for feature_collection in feature_collections:
             if 'itemId' in feature_collection and feature_collection['itemId'] is not None:
@@ -2115,23 +2104,9 @@ def _get_item_definitions(item, item_definitions):
                     service_url = data_connection['workspaceConnectionString'][4:]
                     feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == service_url), None)
                     if not feature_service:
-                        try:
-                            service = FeatureLayerCollection(service_url, source)               
-                        except Exception:
-                            _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                            continue
-
-                        if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
-                            _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                            continue
-
-                        try:
-                            item_id = service.properties['serviceItemId']
-                            feature_service = source.content.get(item_id)
-                        except RuntimeError:
-                            _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
-                            raise
-                        _get_item_definitions(feature_service, item_definitions)
+                        feature_service = _get_feature_service_related_item(service_url, source)
+                        if not feature_service:
+                            _get_item_definitions(feature_service, item_definitions)
 
     # If the item is a pro project find the feature services that supports it
     elif item['type'] == 'Project Package':
@@ -2169,23 +2144,9 @@ def _get_item_definitions(item, item_definitions):
                             if workspace_factory == 'FeatureService' and service_url is not None:
                                 feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == service_url), None)
                                 if not feature_service:
-                                    try:
-                                        service = FeatureLayerCollection(service_url, source)               
-                                    except Exception:
-                                        _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                                        continue
-
-                                    if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
-                                        _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                                        continue
-
-                                    try:
-                                        item_id = service.properties['serviceItemId']
-                                        feature_service = source.content.get(item_id)
-                                    except RuntimeError:
-                                        _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
-                                        raise
-                                    _get_item_definitions(feature_service, item_definitions)
+                                    feature_service = _get_feature_service_related_item(service_url, source)
+                                    if not feature_service:
+                                        _get_item_definitions(feature_service, item_definitions)
             
         except ImportError:
             pass
@@ -2295,6 +2256,31 @@ def _get_item_definition(item):
         if item['type'] in _TEXT_BASED_ITEM_TYPES:
             return _TextItemDefinition(dict(item), data=item.get_data(), thumbnail=None, portal_item=item)
         return _ItemDefinition(dict(item), data=None, thumbnail=None, portal_item=item)
+
+def _get_feature_service_related_item(service_url, source):
+    try:
+        service = FeatureLayerCollection(service_url, source)               
+    except Exception:
+        _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
+        return
+
+    item_id = None
+    if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
+        document_info = _deep_get(service.properties, 'documentInfo')
+        if document_info is not None:
+            item_ids = re.findall('serviceitemid:[0-9A-F]{32}', json.dumps(document_info), re.IGNORECASE)
+            if len(item_ids) > 0:
+                item_id = item_ids[0][len('serviceitemid:'):]
+    else:
+        item_id = service.properties['serviceItemId']
+
+    try:
+        if item_id is not None:
+            return source.content.get(item_id)
+        _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
+    except RuntimeError:
+        _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
+        raise
 
 def _add_message(message, message_type='Info'):
     """Add a message to the output"""
