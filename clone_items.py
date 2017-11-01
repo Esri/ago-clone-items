@@ -301,13 +301,13 @@ class _FeatureServiceDefinition(_TextItemDefinition):
         """Gets the features for the service"""
         return copy.deepcopy(self._features)
 
-    def _get_features(self, feature_layer, wkid=None):
+    def _get_features(self, feature_layer, spatial_reference=None):
         """Get the features for the given feature layer of a feature service. Returns a list of json features.
         Keyword arguments:
         feature_layer - The feature layer to return the features for
-        wkid -  The wkid for the spatial reference to return the features in"""
-        if wkid is None:
-            wkid = 3857
+        spatial_reference -  The spatial reference to return the features in"""
+        if spatial_reference is None:
+            spatial_reference = { 'wkid' : 3857 }
       
         total_features = []
         record_count = feature_layer.query(return_count_only=True)
@@ -318,18 +318,18 @@ class _FeatureServiceDefinition(_TextItemDefinition):
         return_z = 'hasZ' in feature_layer.properties and feature_layer.properties['hasZ']
         return_m = 'hasM' in feature_layer.properties and feature_layer.properties['hasM']
         while offset < record_count:
-            features = feature_layer.query(out_sr=wkid, result_offset=offset, result_record_count=max_record_count, return_z=return_z, return_m=return_m).features
+            features = feature_layer.query(out_sr=spatial_reference, result_offset=offset, result_record_count=max_record_count, return_z=return_z, return_m=return_m).features
             offset += len(features)
             total_features += [f.as_dict for f in features]
         return total_features
 
-    def _add_features(self, layers, relationships, layer_field_mapping, wkid):
+    def _add_features(self, layers, relationships, layer_field_mapping, spatial_reference):
         """Add the features from the definition to the layers returned from the cloned item.
         Keyword arguments:
         layers - Dictionary containing the id of the layer and its corresponding arcgis.lyr.FeatureLayer
         relationships - Dictionary containing the id of the layer and its relationship definitions
         layer_field_mapping - field mapping if the case or name of field changed from the original service
-        wkid -  The wkid for the spatial reference to create the features in"""
+        spatial_reference -  The spatial reference to create the features in"""
 
         # Get the features if they haven't already been queried
         features = self.features
@@ -339,7 +339,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             features = {}
             original_layers = svc.layers + svc.tables
             for layer in original_layers:
-                features[str(layer.properties['id'])] = self._get_features(layer, wkid)
+                features[str(layer.properties['id'])] = self._get_features(layer, spatial_reference)
         else:
             return   
 
@@ -905,7 +905,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
     
             # Copy features from original item
             if COPY_DATA and not self.is_view:
-                self._add_features(new_layers, relationships, layer_field_mapping, feature_service.properties['spatialReference']['wkid'])
+                self._add_features(new_layers, relationships, layer_field_mapping, feature_service.properties['spatialReference'])
 
             return [new_item, layer_field_mapping, layer_id_mapping, layer_fields, relationship_field_mapping]
         except _CustomCancelException as ex:
@@ -2297,8 +2297,8 @@ def _add_message(message, message_type='Info'):
 
 def _get_extent_definition(extent):
     """Get the extent definition for the feature service based on the user specified extent and spatial reference. 
-    This function required the arcpy module to project the specified or default extent into the specified spatial reference.
-    If the module is not availble or if neither the ITEM_EXTENT or SPATIAL_REFERENCE are specified the default service extent will be returned.
+    This function requires the arcpy module to project the specified or default extent into the specified spatial reference.
+    If the module is not available or if neither the ITEM_EXTENT or SPATIAL_REFERENCE are specified the default service extent will be returned.
     extent - The json representation of an extent.""" 
     
     try:
@@ -2306,9 +2306,6 @@ def _get_extent_definition(extent):
             return extent
 
         import arcpy
-        wkid = extent['spatialReference']['wkid']
-        if SPATIAL_REFERENCE is not None:
-            wkid = SPATIAL_REFERENCE
 
         if ITEM_EXTENT is not None:
             item_extent = ITEM_EXTENT.split(",")
@@ -2319,9 +2316,27 @@ def _get_extent_definition(extent):
                        [extent['xmax'], extent['ymax']], 
                        [extent['xmin'], extent['ymax']], 
                        [extent['xmin'], extent['ymin']]]
-        polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), arcpy.SpatialReference(extent['spatialReference']['wkid']))
-        new_extent = polygon.extent.projectAs(arcpy.SpatialReference(wkid))
-        extent = {"xmin" : new_extent.XMin, "ymin" : new_extent.YMin, "xmax" : new_extent.XMax, "ymax" : new_extent.YMax, "spatialReference" : {'wkid': wkid}}
+
+        original_sr = arcpy.SpatialReference()
+        if 'wkid' in extent['spatialReference']:
+            original_sr = arcpy.SpatialReference(extent['spatialReference']['wkid'])
+        elif 'wkt' in extent['spatialReference']:
+            original_sr.loadFromString(extent['spatialReference']['wkt'])
+
+        polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), original_sr)
+
+        spatial_reference = extent['spatialReference']
+        if SPATIAL_REFERENCE is not None:
+            spatial_reference =  {'wkid': SPATIAL_REFERENCE}
+
+        new_sr = arcpy.SpatialReference()
+        if 'wkid' in spatial_reference:
+            new_sr = arcpy.SpatialReference(spatial_reference['wkid'])
+        elif 'wkt' in spatial_reference:
+            new_sr.loadFromString(spatial_reference['wkt'])
+
+        new_extent = polygon.extent.projectAs(new_sr)
+        extent = {"xmin" : new_extent.XMin, "ymin" : new_extent.YMin, "xmax" : new_extent.XMax, "ymax" : new_extent.YMax, "spatialReference" : spatial_reference}
 
     except ImportError:
         pass
