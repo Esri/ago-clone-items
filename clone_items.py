@@ -30,8 +30,6 @@ ITEM_EXTENT = None
 SPATIAL_REFERENCE = None
 ADD_TAGS = []
 REMOVE_TAGS = []
-_TARGET_MUST_EXIST_TAG = 'target-must-exist'
-_TEMP_DIR = None
 
 #region Group and Item Definition Classes
 
@@ -129,6 +127,8 @@ class _ItemDefinition(object):
         item_properties['tags'] = [t for t in tags if all(not ex.match(t) for ex in expressions)]
         if _TARGET_MUST_EXIST_TAG in item_properties['tags']:
             item_properties['tags'].remove(_TARGET_MUST_EXIST_TAG)
+        if _MAINTAIN_SPATIAL_REF in item_properties['tags']:
+            item_properties['tags'].remove(_MAINTAIN_SPATIAL_REF)
 
         type_keywords.append('source-{0}'.format(self.info['id']))
         item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
@@ -532,8 +532,11 @@ class _FeatureServiceDefinition(_TextItemDefinition):
                     del service_definition[key]
 
             # Set the extent and spatial reference of the service
-            extent = service_definition['initialExtent']
-            extent = _get_extent_definition(extent)
+            original_extent = service_definition['initialExtent']
+            spatial_reference = None
+            if _MAINTAIN_SPATIAL_REF not in original_item['tags']:
+                spatial_reference = SPATIAL_REFERENCE
+            extent = _get_extent_definition(original_extent, ITEM_EXTENT, spatial_reference)
             service_definition['initialExtent'] = extent
             service_definition['spatialReference'] = extent['spatialReference']
 
@@ -616,7 +619,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
 
                 # Set the extent of the feature layer to the specified default extent
                 if layer['type'] == 'Feature Layer':
-                    layer['extent'] = extent
+                    layer['extent'] = original_extent
 
                 # Remove hasViews property if exists
                 if 'hasViews' in layer:
@@ -2295,39 +2298,40 @@ def _add_message(message, message_type='Info'):
     except ImportError:
         print(message)
 
-def _get_extent_definition(extent):
+def _get_extent_definition(original_extent, item_extent, new_spatial_ref):
     """Get the extent definition for the feature service based on the user specified extent and spatial reference. 
     This function requires the arcpy module to project the specified or default extent into the specified spatial reference.
     If the module is not available or if neither the ITEM_EXTENT or SPATIAL_REFERENCE are specified the default service extent will be returned.
     extent - The json representation of an extent.""" 
     
     try:
-        if ITEM_EXTENT is None and SPATIAL_REFERENCE is None:
+        if item_extent is None and new_spatial_ref is None:
             return extent
 
         import arcpy
 
-        if ITEM_EXTENT is not None:
-            item_extent = ITEM_EXTENT.split(",")
-            extent = {"xmin" : item_extent[0], "ymin" : item_extent[1], "xmax" : item_extent[2], "ymax" : item_extent[3], "spatialReference" : {'wkid': 4326}}
+        new_extent = original_extent
+        if item_extent is not None:
+            extent_list = item_extent.split(",")
+            new_extent = {"xmin" : extent_list[0], "ymin" : extent_list[1], "xmax" : extent_list[2], "ymax" : extent_list[3], "spatialReference" : {'wkid': 4326}}
 
-        coordinates = [[extent['xmin'], extent['ymin']], 
-                       [extent['xmax'], extent['ymin']], 
-                       [extent['xmax'], extent['ymax']], 
-                       [extent['xmin'], extent['ymax']], 
-                       [extent['xmin'], extent['ymin']]]
+        coordinates = [[new_extent['xmin'], new_extent['ymin']], 
+                       [new_extent['xmax'], new_extent['ymin']], 
+                       [new_extent['xmax'], new_extent['ymax']], 
+                       [new_extent['xmin'], new_extent['ymax']], 
+                       [new_extent['xmin'], new_extent['ymin']]]
 
         original_sr = arcpy.SpatialReference()
-        if 'wkid' in extent['spatialReference']:
-            original_sr = arcpy.SpatialReference(extent['spatialReference']['wkid'])
-        elif 'wkt' in extent['spatialReference']:
-            original_sr.loadFromString(extent['spatialReference']['wkt'])
+        if 'wkid' in new_extent['spatialReference']:
+            original_sr = arcpy.SpatialReference(new_extent['spatialReference']['wkid'])
+        elif 'wkt' in new_extent['spatialReference']:
+            original_sr.loadFromString(new_extent['spatialReference']['wkt'])
 
         polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), original_sr)
 
-        spatial_reference = extent['spatialReference']
-        if SPATIAL_REFERENCE is not None:
-            spatial_reference =  {'wkid': SPATIAL_REFERENCE}
+        spatial_reference = original_extent['spatialReference']
+        if new_spatial_ref is not None:
+            spatial_reference =  {'wkid': new_spatial_ref}
 
         new_sr = arcpy.SpatialReference()
         if 'wkid' in spatial_reference:
@@ -2335,8 +2339,8 @@ def _get_extent_definition(extent):
         elif 'wkt' in spatial_reference:
             new_sr.loadFromString(spatial_reference['wkt'])
 
-        new_extent = polygon.extent.projectAs(new_sr)
-        extent = {"xmin" : new_extent.XMin, "ymin" : new_extent.YMin, "xmax" : new_extent.XMax, "ymax" : new_extent.YMax, "spatialReference" : spatial_reference}
+        extent_geometry = polygon.extent.projectAs(new_sr)
+        extent = {"xmin" : extent_geometry.XMin, "ymin" : extent_geometry.YMin, "xmax" : extent_geometry.XMax, "ymax" : extent_geometry.YMax, "spatialReference" : spatial_reference}
 
     except ImportError:
         pass
@@ -2792,6 +2796,10 @@ def _deep_get(dictionary, *keys):
     return reduce(lambda d, key: d.get(key) if d else None, keys, dictionary)
 
 #endregion
+
+_TARGET_MUST_EXIST_TAG = 'target-must-exist'
+_MAINTAIN_SPATIAL_REF = 'maintain-spatial-ref'
+_TEMP_DIR = None
 
 _TEXT_BASED_ITEM_TYPES = ['Web Map', 'Feature Service', 'Map Service', 'Operation View',
                           'Image Service', 'Feature Collection', 'Feature Collection Template',
