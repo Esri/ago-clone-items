@@ -1545,6 +1545,8 @@ class _ProProjectPackageDefinition(_ItemDefinition):
                     if os.path.exists(project_dir):
                         aprx_files = [f for f in os.listdir(project_dir) if f.endswith('.aprx')]
                         if len(aprx_files) == 1:
+                            service_version_infos = {}
+
                             aprx_file = os.path.join(project_dir, aprx_files[0])
                             aprx = arcpy.mp.ArcGISProject(aprx_file)
                             maps = aprx.listMaps()
@@ -1564,6 +1566,17 @@ class _ProProjectPackageDefinition(_ItemDefinition):
                                                 new_connection_properties = copy.deepcopy(connection_properties)
                                                 new_connection_properties['connection_info']['url'] = new_service['url']
                                                 new_connection_properties['dataset'] = str(new_id)
+
+                                                if 'version' in new_connection_properties['connection_info']:
+                                                    if new_service['url'] not in service_version_infos:
+                                                        try:
+                                                            service_version_infos[new_service['url']] = _get_version_management_server(target, new_service['url'])
+                                                        except:
+                                                            raise Exception('Failed to retrieve Version Manager from target feature layer')
+                                                    version_info = service_version_infos[new_service['url']]
+                                                    new_connection_properties['connection_info']['version'] = version_info['defaultVersionName']
+                                                    new_connection_properties['connection_info']['versionguid'] = version_info['defaultVersionGuid']
+                                                                   
                                                 lyr.updateConnectionProperties(connection_properties, new_connection_properties, validate=False)
                             aprx.save()                        
 
@@ -2504,6 +2517,17 @@ def _add_relationship(origin_item, destination_item, rel_type):
     path = 'content/users/' + origin_item.owner
     path += '/addRelationship'
     origin_item._gis._portal.con.post(path, postdata)
+
+def _get_version_management_server(target, feature_service):
+    """Gets the url of the portal/org
+    Keyword arguments:
+    target - The portal/org to get the url for.
+    feature_service - The url to the feature_service in the portal to retrieve the Version Manager info."""
+
+    postdata = {'f' : 'json'}
+    path = os.path.dirname(feature_service)
+    path += '/VersionManagementServer'
+    return target._portal.con.post(path, postdata)
 
 def _get_org_url(target):
     """Gets the url of the portal/org
