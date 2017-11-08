@@ -529,7 +529,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             name = self._get_unique_name(target, name, item_mapping, False)       
             service_definition['name'] = name
     
-            for key in ['layers', 'tables', 'fullExtent']:
+            for key in ['layers', 'tables', 'fullExtent', 'hasViews']:
                 if key in service_definition:
                     del service_definition[key]
 
@@ -762,22 +762,23 @@ class _FeatureServiceDefinition(_TextItemDefinition):
 
                 # Update field visibility for views
                 if self.is_view:
+                    if 'viewDefinitionQuery' in layer and layer['viewDefinitionQuery']:
+                        update_definition['viewDefinitionQuery'] = layer['viewDefinitionQuery']
+                        if layer_id in layer_field_mapping:
+                            update_definition['viewDefinitionQuery'] = _find_and_replace_fields(update_definition['viewDefinitionQuery'], layer_field_mapping[layer_id])
+
                     field_visibility = []
                     need_update = False
+                    view_field_names = [f['name'].lower() for f in layer['fields']]
                     for source_field in self.view_source_fields[layer_id]:
-                        source_field_name = source_field['name']
-                        view_field_names = [f['name'] for f in layer['fields']]
-                        visible = source_field_name in view_field_names
+                        source_field_name = source_field['name']                   
+                        visible = source_field_name.lower() in view_field_names
                         if not visible:
                             need_update = True
                         field_name = source_field_name
                         if layer_id in layer_field_mapping:
                             if source_field_name in layer_field_mapping[layer_id]:
                                 field_name = layer_field_mapping[layer_id][source_field_name]
-                            if 'viewDefinitionQuery' in layer and layer['viewDefinitionQuery']:
-                                update_definition['viewDefinitionQuery'] = _find_and_replace_fields(layer['viewDefinitionQuery'], layer_field_mapping[layer_id])
-                            if 'definitionQuery' in layer and layer['definitionQuery']:
-                                update_definition['definitionQuery'] = _find_and_replace_fields(layer['definitionQuery'], layer_field_mapping[layer_id])
                         field_visibility.append({'name' : field_name, 'visible' : visible})
                     if need_update:
                         update_definition['fields'] = field_visibility
@@ -2039,7 +2040,8 @@ def _get_item_definitions(item, item_definitions):
                     else:
                         raise Exception(multiple_source_error)
                     view_sources[layer.properties['id']] = layer_source['url']
-                    view_source_fields[layer.properties['id']] = layer.properties.fields
+                    feature_layer = FeatureLayer(layer_source['url'], source)
+                    view_source_fields[layer.properties['id']] = feature_layer.properties.fields
             except RuntimeError:
                 _add_message("Failed to get feature layer view and its sources {0}".format(item['id']), 'Error')
                 raise
@@ -2326,6 +2328,7 @@ def _get_extent_definition(original_extent, item_extent, new_spatial_ref):
     extent - The json representation of an extent.""" 
     
     try:
+        extent = original_extent
         if item_extent is None and new_spatial_ref is None:
             return extent
 
