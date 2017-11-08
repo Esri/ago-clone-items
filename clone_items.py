@@ -538,9 +538,9 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             spatial_reference = None
             if _MAINTAIN_SPATIAL_REF not in original_item['tags']:
                 spatial_reference = SPATIAL_REFERENCE
-            extent = _get_extent_definition(original_extent, ITEM_EXTENT, spatial_reference)
-            service_definition['initialExtent'] = extent
-            service_definition['spatialReference'] = extent['spatialReference']
+            new_extent = _get_extent_definition(original_extent, ITEM_EXTENT, spatial_reference)
+            service_definition['initialExtent'] = new_extent
+            service_definition['spatialReference'] = new_extent['spatialReference']
 
             if self.is_view:
                 properties = ['name', 'isView', 'sourceSchemaChangesAllowed', 'isUpdatableView', 'capabilities']
@@ -621,7 +621,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
 
                 # Set the extent of the feature layer to the specified default extent
                 if layer['type'] == 'Feature Layer':
-                    layer['extent'] = original_extent
+                    layer['extent'] = new_extent
 
                 # Remove hasViews property if exists
                 if 'hasViews' in layer:
