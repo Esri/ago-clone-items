@@ -1758,78 +1758,80 @@ def clone(target, item, folder_name=None, existing_items=[]):
                         layer_fields[new_layer.properties.id] = new_layer.properties.fields                
                     original_layers_definition = item_definition.layers_definition
                     original_layers = original_layers_definition['layers'] + original_layers_definition['tables']
+               
+                    if len(original_layers) > len(new_layers):
+                        raise Exception('{0} {1} layers and tables must match the source {0}'.format(new_item['type'], new_item['title']))
 
                     # Get a mapping between layer ids, fields and related fields
-                    if len(original_layers) <= len(new_layers):
-                        original_layer_ids = [original_layer['id'] for original_layer in original_layers]
-                        new_layer_ids = [new_layer.properties['id'] for new_layer in new_layers]
-                        new_layer_names = [new_layer.properties['name'] for new_layer in new_layers]
-                        for layer in original_layers:
-                            try:
-                                new_layer = new_layers[new_layer_names.index(layer['name'])]
-                                layer_id_mapping[layer['id']] = new_layer.properties['id']
-                                new_layer_ids.remove(new_layer.properties['id'])
-                                original_layer_ids.remove(layer['id'])
-                            except ValueError:
-                                pass
-                        for id in original_layer_ids:
-                            layer_id_mapping[id] = new_layer_ids.pop(0)
+                    original_layer_ids = [original_layer['id'] for original_layer in original_layers]
+                    new_layer_ids = [new_layer.properties['id'] for new_layer in new_layers]
+                    new_layer_names = [new_layer.properties['name'] for new_layer in new_layers]
+                    for layer in original_layers:
+                        try:
+                            new_layer = new_layers[new_layer_names.index(layer['name'])]
+                            layer_id_mapping[layer['id']] = new_layer.properties['id']
+                            new_layer_ids.remove(new_layer.properties['id'])
+                            original_layer_ids.remove(layer['id'])
+                        except ValueError:
+                            pass
+                    for id in original_layer_ids:
+                        layer_id_mapping[id] = new_layer_ids.pop(0)
 
-                        for original_id, new_id in layer_id_mapping.items():
-                            field_mapping = {}            
-                            for layer in original_layers:
-                                if layer['id'] == original_id:
-                                    new_layer = next((l for l in new_layers if l.properties['id'] == new_id), None)
-                                    original_fields = _deep_get(layer, 'fields')
-                                    new_fields = _deep_get(new_layer.properties, 'fields')
-                                    if new_fields is None or original_fields is None:
+                    for original_id, new_id in layer_id_mapping.items():
+                        field_mapping = {}            
+                        for layer in original_layers:
+                            if layer['id'] == original_id:
+                                new_layer = next((l for l in new_layers if l.properties['id'] == new_id), None)
+                                original_fields = _deep_get(layer, 'fields')
+                                new_fields = _deep_get(new_layer.properties, 'fields')
+                                if new_fields is None or original_fields is None:
+                                    continue
+                                new_fields_lower = [f['name'].lower() for f in new_fields]
+
+                                if 'editFieldsInfo' in layer and layer['editFieldsInfo'] is not None:                            
+                                    if 'editFieldsInfo' in new_layer.properties and new_layer.properties['editFieldsInfo'] is not None:
+                                        for editor_field in ['creationDateField', 'creatorField', 'editDateField', 'editorField']:
+                                            original_editor_field_name = _deep_get(layer, 'editFieldsInfo', editor_field)
+                                            new_editor_field_name = _deep_get(new_layer.properties, 'editFieldsInfo', editor_field)
+                                            if original_editor_field_name !=  new_editor_field_name:
+                                                if original_editor_field_name is not None and original_editor_field_name != "" and new_editor_field_name is not None and new_editor_field_name != "":
+                                                    field_mapping[original_editor_field_name] = new_editor_field_name
+
+                                original_oid_field = _deep_get(layer, 'objectIdField')
+                                new_oid_field = _deep_get(new_layer.properties, 'objectIdField')
+                                if original_oid_field != new_oid_field:
+                                    if original_oid_field is not None and original_oid_field != "" and new_oid_field is not None and new_oid_field != "":
+                                        field_mapping[original_oid_field] = new_oid_field
+
+                                original_globalid_field = _deep_get(layer, 'globalIdField')
+                                new_globalid_field = _deep_get(new_layer.properties, 'globalIdField')
+                                if original_globalid_field != new_globalid_field:
+                                    if original_globalid_field is not None and original_globalid_field != "" and new_globalid_field is not None and new_globalid_field != "":
+                                        field_mapping[original_globalid_field] = new_globalid_field
+
+                                for field in original_fields:
+                                    if field['name'] in field_mapping:
                                         continue
-                                    new_fields_lower = [f['name'].lower() for f in new_fields]
+                                    try:
+                                        new_field = new_fields[new_fields_lower.index(field['name'].lower())]
+                                        if field['name'] != new_field['name']:
+                                            field_mapping[field['name']] = new_field['name']
+                                    except ValueError:
+                                        pass    
+                                break
+                        if len(field_mapping) > 0:
+                            layer_field_mapping[original_id] = field_mapping
 
-                                    if 'editFieldsInfo' in layer and layer['editFieldsInfo'] is not None:                            
-                                        if 'editFieldsInfo' in new_layer.properties and new_layer.properties['editFieldsInfo'] is not None:
-                                            for editor_field in ['creationDateField', 'creatorField', 'editDateField', 'editorField']:
-                                                original_editor_field_name = _deep_get(layer, 'editFieldsInfo', editor_field)
-                                                new_editor_field_name = _deep_get(new_layer.properties, 'editFieldsInfo', editor_field)
-                                                if original_editor_field_name !=  new_editor_field_name:
-                                                    if original_editor_field_name is not None and original_editor_field_name != "" and new_editor_field_name is not None and new_editor_field_name != "":
-                                                        field_mapping[original_editor_field_name] = new_editor_field_name
-
-                                    original_oid_field = _deep_get(layer, 'objectIdField')
-                                    new_oid_field = _deep_get(new_layer.properties, 'objectIdField')
-                                    if original_oid_field != new_oid_field:
-                                        if original_oid_field is not None and original_oid_field != "" and new_oid_field is not None and new_oid_field != "":
-                                            field_mapping[original_oid_field] = new_oid_field
-
-                                    original_globalid_field = _deep_get(layer, 'globalIdField')
-                                    new_globalid_field = _deep_get(new_layer.properties, 'globalIdField')
-                                    if original_globalid_field != new_globalid_field:
-                                        if original_globalid_field is not None and original_globalid_field != "" and new_globalid_field is not None and new_globalid_field != "":
-                                            field_mapping[original_globalid_field] = new_globalid_field
-
-                                    for field in original_fields:
-                                        if field['name'] in field_mapping:
-                                            continue
-                                        try:
-                                            new_field = new_fields[new_fields_lower.index(field['name'].lower())]
-                                            if field['name'] != new_field['name']:
-                                                field_mapping[field['name']] = new_field['name']
-                                        except ValueError:
-                                            pass    
-                                    break
-                            if len(field_mapping) > 0:
-                                layer_field_mapping[original_id] = field_mapping
-
-                        for layer in original_layers:
-                            layer_id = layer['id']
-                            if 'relationships' in layer and layer['relationships'] is not None:
-                                for relationship in layer['relationships']:
-                                    related_table_id = relationship['relatedTableId']
-                                    if related_table_id in layer_field_mapping:
-                                        if layer_id not in relationship_field_mapping:
-                                            relationship_field_mapping[layer_id] = {}
-                                        field_mapping = layer_field_mapping[related_table_id]
-                                        relationship_field_mapping[layer_id][relationship['id']] = field_mapping
+                    for layer in original_layers:
+                        layer_id = layer['id']
+                        if 'relationships' in layer and layer['relationships'] is not None:
+                            for relationship in layer['relationships']:
+                                related_table_id = relationship['relatedTableId']
+                                if related_table_id in layer_field_mapping:
+                                    if layer_id not in relationship_field_mapping:
+                                        relationship_field_mapping[layer_id] = {}
+                                    field_mapping = layer_field_mapping[related_table_id]
+                                    relationship_field_mapping[layer_id][relationship['id']] = field_mapping
 
                 else:
                     layer_field_mapping = result[1]
