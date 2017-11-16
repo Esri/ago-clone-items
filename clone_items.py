@@ -136,7 +136,8 @@ class _ItemDefinition(object):
         item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
         item_properties['tags'] = ','.join(item_properties['tags'])
 
-        if ITEM_EXTENT is not None:
+        extent = _deep_get(item_properties, 'extent')
+        if ITEM_EXTENT is not None and extent is not None and len(extent) > 0:
             item_properties['extent'] = ITEM_EXTENT
 
         return item_properties
@@ -1083,7 +1084,10 @@ class _ApplicationDefinition(_TextItemDefinition):
                         if 'widgets' in app_json:
                             for widget in app_json['widgets']:
                                 if widget['type'] == 'mapWidget':
-                                    widget['mapId'] = item_mapping['Item IDs'][widget['mapId']]
+                                    if 'itemId' in widget:
+                                        widget['itemId'] = item_mapping['Item IDs'][widget['itemId']]
+                                    elif 'mapId' in widget:
+                                        widget['mapId'] = item_mapping['Item IDs'][widget['mapId']]
 
                     else: #Configurable Application Template
                         if 'folderId' in app_json:
@@ -1940,7 +1944,10 @@ def _get_item_definitions(item, item_definitions):
                 if 'widgets' in app_json:
                     for widget in app_json['widgets']:
                         if widget['type'] == 'mapWidget':
-                            webmap_ids.append(widget['mapId'])
+                            if 'itemId' in widget:
+                                webmap_ids.append(widget['itemId'])
+                            elif 'mapId' in widget:
+                                webmap_ids.append(widget['mapId'])
 
             elif "Web AppBuilder" in item['typeKeywords']: #Web AppBuilder
                 if 'map' in app_json:
