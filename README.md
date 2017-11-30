@@ -13,7 +13,7 @@ This script and associated tool can be used to clone an item and its dependencie
 
 ## Requirements
 
-* [ArcGIS API for Python](https://developers.arcgis.com/python/)
+* [ArcGIS API for Python (minimum version 1.2)](https://developers.arcgis.com/python/)
 * ArcGIS Online or ArcGIS Enterprise
 * ArcGIS Pro (optional)
 

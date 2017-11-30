@@ -71,13 +71,17 @@ class _GroupDefinition(object):
                 i += 1
                 title = "{0} {1}".format(original_group['title'], i)
         
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_group:
-                    thumbnail = self.portal_group.download_thumbnail(temp_dir)
 
-                new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
-                                                 'private', thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
+
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_group:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_group['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_group.download_thumbnail(temp_dir)
+
+            new_group = target.groups.create(title, tags, original_group['description'], original_group['snippet'],
+                                                'private', thumbnail, True, original_group['sortField'], original_group['sortOrder'], True)
             return new_group
         except Exception as ex:
             raise _ItemCreateException("Failed to create group '{0}': {1}".format(original_group['title'], str(ex)), new_group)
@@ -121,12 +125,19 @@ class _ItemDefinition(object):
         tags.extend(ADD_TAGS)
         expressions = [re.compile(x) for x in REMOVE_TAGS]
         item_properties['tags'] = [t for t in tags if all(not ex.match(t) for ex in expressions)]
+        if _TARGET_MUST_EXIST_TAG in item_properties['tags']:
+            item_properties['tags'].remove(_TARGET_MUST_EXIST_TAG)
+        if _MAINTAIN_SPATIAL_REF in item_properties['tags']:
+            item_properties['tags'].remove(_MAINTAIN_SPATIAL_REF)
+        if _COPY_ONLY_TAG in item_properties['tags']:
+            item_properties['tags'].remove(_COPY_ONLY_TAG)
 
         type_keywords.append('source-{0}'.format(self.info['id']))
         item_properties['typeKeywords'] = ','.join(item_properties['typeKeywords'])
         item_properties['tags'] = ','.join(item_properties['tags'])
 
-        if ITEM_EXTENT is not None:
+        extent = _deep_get(item_properties, 'extent')
+        if ITEM_EXTENT is not None and extent is not None and len(extent) > 0:
             item_properties['extent'] = ITEM_EXTENT
 
         return item_properties
@@ -146,26 +157,29 @@ class _ItemDefinition(object):
             # Get the item properties from the original item to be applied when the new item is created
             item_properties = self._get_item_properties()
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                data = self.data
-                if not data and self.portal_item:
-                    data = self.portal_item.download(temp_dir)
+            temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+
+            data = self.data
+            if not data and self.portal_item:
+                data = self.portal_item.download(temp_dir)
                 
-                # The item's name will default to the name of the data, if it already exists in the folder we need to rename it to something unique
-                name = os.path.basename(data)
-                item = next((item for item in target.users.me.items(folder=_deep_get(folder, 'title')) if item['name'] == name), None)
-                if item:
-                    new_name = "{0}_{1}{2}".format(os.path.splitext(name)[0], str(uuid.uuid4()).replace('-', ''), os.path.splitext(name)[1])
-                    new_path = os.path.join(temp_dir, new_name)
-                    os.rename(data, new_path)
-                    data = new_path
+            # The item's name will default to the name of the data, if it already exists in the folder we need to rename it to something unique
+            name = os.path.basename(data)
+            item = next((item for item in target.users.me.items(folder=_deep_get(folder, 'title')) if item['name'] == name), None)
+            if item:
+                new_name = "{0}_{1}{2}".format(os.path.splitext(name)[0], str(uuid.uuid4()).replace('-', ''), os.path.splitext(name)[1])
+                new_path = os.path.join(temp_dir, new_name)
+                os.rename(data, new_path)
+                data = new_path
 
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
 
-                # Add the new item
-                new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+            # Add the new item
+            new_item = target.content.add(item_properties=item_properties, data=data, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
@@ -193,12 +207,14 @@ class _TextItemDefinition(_ItemDefinition):
             data = self.data
             if data:
                 item_properties['text'] = json.dumps(data)
-            
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
@@ -230,13 +246,15 @@ class _FeatureCollectionDefinition(_TextItemDefinition):
                         for layer in data['layers']:
                             if 'featureSet' in layer and layer['featureSet'] is not None:
                                 layer['featureSet']['features'] = []
-                item_properties['text'] = json.dumps(data)
-            
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+                item_properties['text'] = json.dumps(data)           
+
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
@@ -286,13 +304,13 @@ class _FeatureServiceDefinition(_TextItemDefinition):
         """Gets the features for the service"""
         return copy.deepcopy(self._features)
 
-    def _get_features(self, feature_layer, wkid=None):
+    def _get_features(self, feature_layer, spatial_reference=None):
         """Get the features for the given feature layer of a feature service. Returns a list of json features.
         Keyword arguments:
         feature_layer - The feature layer to return the features for
-        wkid -  The wkid for the spatial reference to return the features in"""
-        if wkid is None:
-            wkid = 3857
+        spatial_reference -  The spatial reference to return the features in"""
+        if spatial_reference is None:
+            spatial_reference = { 'wkid' : 3857 }
       
         total_features = []
         record_count = feature_layer.query(return_count_only=True)
@@ -303,18 +321,18 @@ class _FeatureServiceDefinition(_TextItemDefinition):
         return_z = 'hasZ' in feature_layer.properties and feature_layer.properties['hasZ']
         return_m = 'hasM' in feature_layer.properties and feature_layer.properties['hasM']
         while offset < record_count:
-            features = feature_layer.query(out_sr=wkid, result_offset=offset, result_record_count=max_record_count, return_z=return_z, return_m=return_m).features
+            features = feature_layer.query(out_sr=spatial_reference, result_offset=offset, result_record_count=max_record_count, return_z=return_z, return_m=return_m).features
             offset += len(features)
             total_features += [f.as_dict for f in features]
         return total_features
 
-    def _add_features(self, layers, relationships, layer_field_mapping, wkid):
+    def _add_features(self, layers, relationships, layer_field_mapping, spatial_reference):
         """Add the features from the definition to the layers returned from the cloned item.
         Keyword arguments:
         layers - Dictionary containing the id of the layer and its corresponding arcgis.lyr.FeatureLayer
         relationships - Dictionary containing the id of the layer and its relationship definitions
         layer_field_mapping - field mapping if the case or name of field changed from the original service
-        wkid -  The wkid for the spatial reference to create the features in"""
+        spatial_reference -  The spatial reference to create the features in"""
 
         # Get the features if they haven't already been queried
         features = self.features
@@ -324,7 +342,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             features = {}
             original_layers = svc.layers + svc.tables
             for layer in original_layers:
-                features[str(layer.properties['id'])] = self._get_features(layer, wkid)
+                features[str(layer.properties['id'])] = self._get_features(layer, spatial_reference)
         else:
             return   
 
@@ -438,10 +456,12 @@ class _FeatureServiceDefinition(_TextItemDefinition):
                         oid = object_id_mapping[layer_id][original_oid]
                         attachment_infos = original_attachments.get_list(original_oid)
                         if len(attachment_infos) > 0:
-                            with tempfile.TemporaryDirectory() as temp_dir:
-                                for attachment_info in attachment_infos:
-                                    attachment_file = original_attachments.download(original_oid, attachment_info['id'], temp_dir)
-                                    attachments.add(oid, attachment_file)
+                            temp_dir = os.path.join(_TEMP_DIR.name, 'attachments')
+                            if not os.path.exists(temp_dir):
+                                os.makedirs(temp_dir)
+                            for attachment_info in attachment_infos:
+                                attachment_file = original_attachments.download(original_oid, attachment_info['id'], temp_dir)
+                                attachments.add(oid, attachment_file)
 
     def _get_unique_name(self, target, name, item_mapping, force_add_guid_suffix):
         """Create a new unique name for the service.
@@ -503,19 +523,25 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             # Get the definition of the original feature service
             service_definition = self.service_definition
 
-            # Modify the definition before passing to create the new service             
-            name = self._get_unique_name(target, original_item['name'], item_mapping, False)       
+            # Modify the definition before passing to create the new service   
+            name = original_item['name']
+            if name is None:
+                name = os.path.basename(os.path.dirname(original_item['url']))
+            name = self._get_unique_name(target, name, item_mapping, False)       
             service_definition['name'] = name
     
-            for key in ['layers', 'tables', 'fullExtent']:
+            for key in ['layers', 'tables', 'fullExtent', 'hasViews']:
                 if key in service_definition:
                     del service_definition[key]
 
             # Set the extent and spatial reference of the service
-            extent = service_definition['initialExtent']
-            extent = _get_extent_definition(extent)
-            service_definition['initialExtent'] = extent
-            service_definition['spatialReference'] = extent['spatialReference']
+            original_extent = service_definition['initialExtent']
+            spatial_reference = None
+            if _MAINTAIN_SPATIAL_REF not in original_item['tags']:
+                spatial_reference = SPATIAL_REFERENCE
+            new_extent = _get_extent_definition(original_extent, ITEM_EXTENT, spatial_reference)
+            service_definition['initialExtent'] = new_extent
+            service_definition['spatialReference'] = new_extent['spatialReference']
 
             if self.is_view:
                 properties = ['name', 'isView', 'sourceSchemaChangesAllowed', 'isUpdatableView', 'capabilities']
@@ -523,6 +549,13 @@ class _FeatureServiceDefinition(_TextItemDefinition):
                 for key, value in service_definition_copy.items():
                     if key not in properties:
                         del service_definition[key]
+
+            # Remove any unsupported capabilities from layer for Portal
+            supported_capabilities = ['Create','Query','Editing','Update','Delete','Uploads','Sync','Extract']                         
+            if target.properties.isPortal:
+                capabilities = _deep_get(service_definition, 'capabilities')
+                if capabilities is not None:
+                   service_definition['capabilities'] = ','.join([x for x in capabilities.split(',') if x in supported_capabilities])
 
             # Create a new feature service
             # In some cases isServiceNameAvailable returns true but fails to create the service with error that a service with the name already exists.
@@ -589,7 +622,11 @@ class _FeatureServiceDefinition(_TextItemDefinition):
 
                 # Set the extent of the feature layer to the specified default extent
                 if layer['type'] == 'Feature Layer':
-                    layer['extent'] = extent
+                    layer['extent'] = new_extent
+
+                # Remove hasViews property if exists
+                if 'hasViews' in layer:
+                    del layer['hasViews']
 
                 # Update the view layer source properties
                 if self.is_view:
@@ -609,22 +646,30 @@ class _FeatureServiceDefinition(_TextItemDefinition):
                             admin_layer_info['viewLayerDefinition'] = view_layer_definition
                             break
 
+                # Remove any unsupported capabilities from layer for Portal
+                if target.properties.isPortal:
+                    capabilities = _deep_get(layer, 'capabilities')
+                    if capabilities is not None:
+                        layer['capabilities'] = ','.join([x for x in capabilities.split(',') if x in supported_capabilities])
+
             # Add the layer and table definitions to the service
             # Explicitly add layers first and then tables, otherwise sometimes json.dumps() reverses them and this effects the output service
             feature_service = FeatureLayerCollection.fromitem(new_item)
             feature_service_admin = feature_service.manager
+            layers = []
+            tables = []
             if len(layers_definition['layers']) > 0:
-                add_to_definition = {'layers' : copy.deepcopy(layers_definition['layers'])}
+                layers = copy.deepcopy(layers_definition['layers'])
                 if self.is_view:
-                    for layer in add_to_definition['layers']:
+                    for layer in layers:
                         del layer['fields']
-                feature_service_admin.add_to_definition(add_to_definition)
             if len(layers_definition['tables']) > 0:
-                add_to_definition = {'tables' : copy.deepcopy(layers_definition['tables'])}
+                tables = copy.deepcopy(layers_definition['tables'])
                 if self.is_view:
-                    for table in add_to_definition['tables']:
+                    for table in tables:
                         del table['fields']
-                feature_service_admin.add_to_definition(add_to_definition)
+            definition = '{{"layers" : {0}, "tables" : {1}}}'.format(json.dumps(layers), json.dumps(tables))
+            _add_to_definition(feature_service_admin, definition)
 
             # Check if tool has been canceled, raise exception with new_item so it can be cleaned up
             _check_cancel_status(new_item)
@@ -675,7 +720,7 @@ class _FeatureServiceDefinition(_TextItemDefinition):
                                 if old_field in field_mapping:
                                     new_delete_field = field_mapping[old_field]
                                 for field in new_layer.properties['fields']:
-                                    if field['name'] == new_delete_field:
+                                    if field['name'] == new_delete_field and self.is_view == False:
                                         del_fields.append(new_delete_field)
                                         break
                                 if layer_id in layer_field_mapping:
@@ -718,22 +763,23 @@ class _FeatureServiceDefinition(_TextItemDefinition):
 
                 # Update field visibility for views
                 if self.is_view:
+                    if 'viewDefinitionQuery' in layer and layer['viewDefinitionQuery']:
+                        update_definition['viewDefinitionQuery'] = layer['viewDefinitionQuery']
+                        if layer_id in layer_field_mapping:
+                            update_definition['viewDefinitionQuery'] = _find_and_replace_fields(update_definition['viewDefinitionQuery'], layer_field_mapping[layer_id])
+
                     field_visibility = []
                     need_update = False
+                    view_field_names = [f['name'].lower() for f in layer['fields']]
                     for source_field in self.view_source_fields[layer_id]:
-                        source_field_name = source_field['name']
-                        view_field_names = [f['name'] for f in layer['fields']]
-                        visible = source_field_name in view_field_names
+                        source_field_name = source_field['name']                   
+                        visible = source_field_name.lower() in view_field_names
                         if not visible:
                             need_update = True
                         field_name = source_field_name
                         if layer_id in layer_field_mapping:
                             if source_field_name in layer_field_mapping[layer_id]:
                                 field_name = layer_field_mapping[layer_id][source_field_name]
-                            if 'viewDefinitionQuery' in layer and layer['viewDefinitionQuery']:
-                                update_definition['viewDefinitionQuery'] = _find_and_replace_fields(layer['viewDefinitionQuery'], layer_field_mapping[layer_id])
-                            if 'definitionQuery' in layer and layer['definitionQuery']:
-                                update_definition['definitionQuery'] = _find_and_replace_fields(layer['definitionQuery'], layer_field_mapping[layer_id])
                         field_visibility.append({'name' : field_name, 'visible' : visible})
                     if need_update:
                         update_definition['fields'] = field_visibility
@@ -750,13 +796,20 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             _check_cancel_status(new_item)
 
             # Add the relationships back to the layers
-            if len(relationships) > 0:
+            relationship_field_mapping = {}
+            if len(relationships) > 0 and self.is_view == False:
                 for layer_id in relationships:
                     for relationship in relationships[layer_id]:
                         if layer_id in layer_field_mapping:
                             field_mapping = layer_field_mapping[layer_id]
                             if relationship['keyField'] in field_mapping:
-                                relationship['keyField'] = field_mapping[relationship['keyField']]         
+                                relationship['keyField'] = field_mapping[relationship['keyField']]    
+                        related_table_id = relationship['relatedTableId']
+                        if related_table_id in layer_field_mapping:
+                            field_mapping = layer_field_mapping[related_table_id]
+                            if layer_id not in relationship_field_mapping:
+                                relationship_field_mapping[layer_id] = {}                
+                            relationship_field_mapping[layer_id][relationship['id']] = field_mapping     
 
                 relationships_copy = copy.deepcopy(relationships)
                 for layer_id in relationships_copy:
@@ -765,9 +818,11 @@ class _FeatureServiceDefinition(_TextItemDefinition):
 
                 if target.properties.isPortal:
                     relationships_definition = {'layers' : []}
-                    for layer_id in relationships_copy:
-                        new_layer_id = layer_id_mapping[layer_id]
-                        relationships_definition['layers'].append({'id' : new_layer_id, 'relationships' : relationships_copy[layer_id]})                
+                    for key, value in layer_id_mapping.items():
+                        if key in relationships_copy:
+                            relationships_definition['layers'].append({'id' : value, 'relationships' : relationships_copy[key]})    
+                        else:
+                            relationships_definition['layers'].append({'id' : value, 'relationships' : []})           
                     feature_service_admin.add_to_definition(relationships_definition)  
                 else:
                     for layer_id in relationships_copy:
@@ -800,41 +855,20 @@ class _FeatureServiceDefinition(_TextItemDefinition):
             if data and 'tables' in data and data['tables'] is not None:
                 layers += [layer for layer in data['tables']]
 
-            # Clear out any field mapping that may have been previously persisted on the item
-            for layer in layers:
-                if 'fieldMapping' in layer:
-                    del layer['fieldMapping']
+            # Update any pop-up, labeling or renderer field references
+            for layer_id in layer_field_mapping:
+                layer = next((layer for layer in layers if layer['id'] == layer_id), None)
+                if layer:
+                    _update_layer_fields(layer, layer_field_mapping[layer_id]) 
 
-            # Update field names and persist field mapping if required
-            if len(layer_field_mapping) > 0:
-                if not data:
-                    data = {}
-
-                for layer_id in layer_field_mapping:
-                    layer = next((layer for layer in layers if layer['id'] == layer_id), None)
-                    if layer:
-                        _update_layer_fields(layer, layer_field_mapping[layer_id]) 
-                        layer['fieldMapping'] = layer_field_mapping[layer_id]
-                    else:
-                        layer = {'id' : layer_id, 'fieldMapping' : layer_field_mapping[layer_id]}
-                        is_table = next((table for table in feature_service.tables if table.properties.id == layer_id), None) is not None
-                        if is_table:
-                            if 'tables' not in data or data['tables'] is None:
-                                data['tables'] = []
-                            data['tables'].append(layer)
-                        else:
-                            if 'layers' not in data or data['layers'] is None:
-                                data['layers'] = []
-                            data['layers'].append(layer)
-            
+            for layer_id in relationship_field_mapping:
+                layer = next((layer for layer in layers if layer['id'] == layer_id), None)
+                if layer:
+                    _update_layer_related_fields(layer, relationship_field_mapping[layer_id]) 
+ 
             # Update the layer id
-            layers = []
-            if data and 'layers' in data and data['layers'] is not None:
-                layers += [layer for layer in data['layers']]
-            if data and 'tables' in data and data['tables'] is not None:
-                layers += [layer for layer in data['tables']]
             for layer in layers:   
-                layer['id'] = layer_id_mapping[layer['id']]
+                layer['id'] = layer_id_mapping[layer['id']]      
 
             # Add GPS Metadata field infos to the pop-up of the layer
             if ADD_GPS_METADATA_FIELDS:
@@ -865,20 +899,22 @@ class _FeatureServiceDefinition(_TextItemDefinition):
                     item_properties['title'] = item_properties['title'].replace(guid, item_mapping['Item IDs'][guid])
 
             # Update the item definition of the service
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item.update(item_properties=item_properties, thumbnail=thumbnail)
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            new_item.update(item_properties=item_properties, thumbnail=thumbnail)
 
             # Check if tool has been canceled, raise exception with new_item so it can be cleaned up
             _check_cancel_status(new_item)
     
             # Copy features from original item
             if COPY_DATA and not self.is_view:
-                self._add_features(new_layers, relationships, layer_field_mapping, feature_service.properties['spatialReference']['wkid'])
+                self._add_features(new_layers, relationships, layer_field_mapping, feature_service.properties['spatialReference'])
 
-            return [new_item, layer_field_mapping, layer_id_mapping, layer_fields]
+            return [new_item, layer_field_mapping, layer_id_mapping, layer_fields, relationship_field_mapping]
         except _CustomCancelException as ex:
             raise ex
         except Exception as ex:
@@ -928,6 +964,8 @@ class _WebMapDefinition(_TextItemDefinition):
                         layer['itemId'] = new_service['id']
                         if layer_id in new_service['layer_field_mapping']:
                             _update_layer_fields(layer, new_service['layer_field_mapping'][layer_id])
+                        if layer_id in new_service['relationship_field_mapping']:
+                            _update_layer_related_fields(layer, new_service['relationship_field_mapping'][layer_id])
                         
                         # If layer contains gps metadata fields, but are not in the popup definition add them
                         if ADD_GPS_METADATA_FIELDS and new_id in new_service['layer_fields']:
@@ -964,11 +1002,14 @@ class _WebMapDefinition(_TextItemDefinition):
 
             # Add the web map to the target portal
             item_properties['text'] = json.dumps(webmap_json)
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
@@ -1006,6 +1047,7 @@ class _ApplicationDefinition(_TextItemDefinition):
             new_item = None
             original_item = self.info
             org_url = _get_org_url(target)
+            is_web_appbuilder = False
 
             # Get the item properties from the original application which will be applied when the new item is created
             item_properties = self._get_item_properties()
@@ -1021,6 +1063,7 @@ class _ApplicationDefinition(_TextItemDefinition):
 
                 else:
                     if "Web AppBuilder" in original_item['typeKeywords']: #Web AppBuilder
+                        is_web_appbuilder = True
                         if 'portalUrl' in app_json:
                             app_json['portalUrl'] = org_url
                         if 'map' in app_json:
@@ -1037,12 +1080,14 @@ class _ApplicationDefinition(_TextItemDefinition):
                         if 'geometryService' in app_json and 'geometry' in target.properties['helperServices']:
                             app_json['geometryService'] = target.properties['helperServices']['geometry']['url']
 
-                    elif original_item['type'] == "Operation View": #Operations Dashboard
+                    elif original_item['type'] in ["Operation View", "Dashboard"]: #Operations Dashboard
                         if 'widgets' in app_json:
                             for widget in app_json['widgets']:
                                 if widget['type'] == 'mapWidget':
-                                    widget['mapId'] = item_mapping['Item IDs'][widget['mapId']]
-                                    break
+                                    if 'itemId' in widget:
+                                        widget['itemId'] = item_mapping['Item IDs'][widget['itemId']]
+                                    elif 'mapId' in widget:
+                                        widget['mapId'] = item_mapping['Item IDs'][widget['mapId']]
 
                     else: #Configurable Application Template
                         if 'folderId' in app_json:
@@ -1051,7 +1096,13 @@ class _ApplicationDefinition(_TextItemDefinition):
                             if 'group' in app_json['values']:
                                 app_json['values']['group'] = item_mapping['Group IDs'][app_json['values']['group']]
                             if 'webmap' in app_json['values']:
-                                app_json['values']['webmap'] = item_mapping['Item IDs'][app_json['values']['webmap']]
+                                if isinstance(app_json['values']['webmap'], list):
+                                    new_webmap_ids = []
+                                    for webmap_id in app_json['values']['webmap']:
+                                        new_webmap_ids.append(item_mapping['Item IDs'][webmap_id])
+                                    app_json['values']['webmap'] = new_webmap_ids
+                                else:
+                                    app_json['values']['webmap'] = item_mapping['Item IDs'][app_json['values']['webmap']]
                         if self.source_app_title is not None:
                             search_query = 'title:"{0}" AND owner:{1} AND type:Web Mapping Application'.format(self.source_app_title, "esri_en") 
                             search_items = target.content.search(search_query, max_items=100, outside_org=True)
@@ -1089,14 +1140,41 @@ class _ApplicationDefinition(_TextItemDefinition):
                             field_mapping = item_mapping['Feature Services'][service]['layer_field_mapping'][layer_id]
                             app_json_text = _find_and_replace_fields(app_json_text, field_mapping)
 
+                # Replace any references to the original org url with the target org url. Used to re-point item resource references
+                if original_item['url'] is not None:
+                    url = original_item['url']
+                    find_string = "/apps/"
+                    index = url.find(find_string)
+                    if index != -1:
+                        source_org_url = url[:index+1]
+                        app_json_text = re.sub(source_org_url, org_url, app_json_text, 0, re.IGNORECASE)
+
                 item_properties['text'] = app_json_text
 
             # Add the application to the target portal
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+
+            # Add the resources to the new item
+            if self.portal_item:
+                resources = self.portal_item.resources
+                resource_list = resources.list()
+                if len(resource_list) > 0:
+                    resources_dir = os.path.join(_TEMP_DIR.name, original_item['id'], 'resources')
+                    if not os.path.exists(resources_dir):
+                        os.makedirs(resources_dir)
+                    for resource in resource_list:
+                        resource_path = resources.get(resource['resource'], False, resources_dir)
+                        folder_name = None
+                        resource_name = resource['resource']
+                        if len(resource_name.split('/')) == 2:
+                            folder_name, resource_name = resource_name.split('/')
+                        new_item.resources.add(resource_path, folder_name, resource_name)
 
             # Update the url of the item to point to the new portal and new id of the application if required
             if original_item['url'] is not None:
@@ -1110,6 +1188,13 @@ class _ApplicationDefinition(_TextItemDefinition):
                     url = '{0}{1}'.format(url[:index + len(find_string)], new_item.id)
                 item_properties = {'url' : url}
                 new_item.update(item_properties)
+
+            # Add a code attachment if the application is Web AppBuilder so that it can be downloaded
+            if is_web_appbuilder:
+                url = '{0}sharing/rest/content/items/{1}/package'.format(org_url[org_url.find('://') + 1:], new_item['id'])
+                code_attachment_properties = {'title' : new_item['title'], 'type' : 'Code Attachment', 'typeKeywords' : 'Code,Web Mapping Application,Javascript',
+                                                'relationshipType' : 'WMA2Code', 'originItemId' : new_item['id'], 'url' : url }
+                target.content.add(item_properties=code_attachment_properties, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
@@ -1142,13 +1227,15 @@ class _FormDefinition(_ItemDefinition):
             # Get the item properties from the original item to be applied when the new item is created
             item_properties = self._get_item_properties()
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
 
-                # Add the new item
-                new_item = target.content.add(item_properties=item_properties, data=None, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+            # Add the new item
+            new_item = target.content.add(item_properties=item_properties, data=None, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
             return [new_item]
             
         except Exception as ex:
@@ -1163,109 +1250,112 @@ class _FormDefinition(_ItemDefinition):
         """
         
         original_item = self.info
-        with tempfile.TemporaryDirectory() as temp_dir:
-            form_zip = self.portal_item.download(temp_dir)
-            zip_file = zipfile.ZipFile(form_zip)
+        temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
 
-            try:
-                # Extract the zip archive to a sub folder
-                new_dir = os.path.join(temp_dir, 'extract')
-                zip_dir = os.path.join(new_dir, 'esriinfo')
+        form_zip = self.portal_item.download(temp_dir)
+        zip_file = zipfile.ZipFile(form_zip)
+
+        try:
+            # Extract the zip archive to a sub folder
+            new_dir = os.path.join(temp_dir, 'extract')
+            zip_dir = os.path.join(new_dir, 'esriinfo')
                 
-                zip_file.extractall(new_dir)
-                zip_file.close()
+            zip_file.extractall(new_dir)
+            zip_file.close()
                 
-                feature_service_url = None
-                form_json = None
+            feature_service_url = None
+            form_json = None
 
-                # Loop through the files and update references to the feature service and item id
-                for path in os.listdir(zip_dir):
-                    if os.path.splitext(path)[1].lower() == '.info':
-                        with open(os.path.join(zip_dir, path), 'r') as file:
-                            data = json.loads(file.read())
+            # Loop through the files and update references to the feature service and item id
+            for path in os.listdir(zip_dir):
+                if os.path.splitext(path)[1].lower() == '.info':
+                    with open(os.path.join(zip_dir, path), 'r') as file:
+                        data = json.loads(file.read())
 
-                        original_url = data['serviceInfo']['url']
-                        for key, value in item_mapping['Feature Services'].items():
-                            if _compare_url(original_url, key):
-                                data['serviceInfo']['itemId'] = value['id']
-                                data['serviceInfo']['url'] = value['url']
-                                feature_service_url = value['url']
-                                break
+                    original_url = data['serviceInfo']['url']
+                    for key, value in item_mapping['Feature Services'].items():
+                        if _compare_url(original_url, key):
+                            data['serviceInfo']['itemId'] = value['id']
+                            data['serviceInfo']['url'] = value['url']
+                            feature_service_url = value['url']
+                            break
 
-                        with open(os.path.join(zip_dir, path), 'w') as file:
-                            file.write(json.dumps(data))
+                    with open(os.path.join(zip_dir, path), 'w') as file:
+                        file.write(json.dumps(data))
 
-                    elif os.path.splitext(path)[1].lower() == '.xml' or path.lower() == 'webform.json':
-                        with open(os.path.join(zip_dir, path), 'r') as file:
+                elif os.path.splitext(path)[1].lower() == '.xml' or path.lower() == 'webform.json':
+                    with open(os.path.join(zip_dir, path), 'r') as file:
+                        data = file.read()
+
+                    data = data.replace(original_item['id'], new_item['id'])
+                    for key, value in item_mapping['Feature Services'].items():
+                        data = re.sub(key, value['url'], data, 0, re.IGNORECASE)
+
+                    with open(os.path.join(zip_dir, path), 'w') as file:
+                        file.write(data)
+
+                elif os.path.splitext(path)[1].lower() == '.iteminfo':
+                    with open(os.path.join(zip_dir, path), 'w') as file:
+                        file.write(json.dumps(dict(new_item)))
+
+                elif path.lower() == 'form.json':
+                    with open(os.path.join(zip_dir, path), 'r') as file:
+                        form_json = file.read()
+
+                elif os.path.splitext(path)[1].lower() == '.xlsx':
+                    xlsx = zipfile.ZipFile(os.path.join(zip_dir, path))
+                    xlsx_dir = os.path.join(zip_dir, 'xlsx')
+                    try:
+                        xlsx.extractall(xlsx_dir)
+                        xlsx.close()
+
+                        with open(os.path.join(xlsx_dir, 'xl/sharedStrings.xml'), 'r') as file:
                             data = file.read()
 
-                        data = data.replace(original_item['id'], new_item['id'])
                         for key, value in item_mapping['Feature Services'].items():
                             data = re.sub(key, value['url'], data, 0, re.IGNORECASE)
 
-                        with open(os.path.join(zip_dir, path), 'w') as file:
+                        with open(os.path.join(xlsx_dir, 'xl/sharedStrings.xml'), 'w') as file:
                             file.write(data)
 
-                    elif os.path.splitext(path)[1].lower() == '.iteminfo':
-                        with open(os.path.join(zip_dir, path), 'w') as file:
-                            file.write(json.dumps(dict(new_item)))
+                        xlsx = zipfile.ZipFile(os.path.join(zip_dir, path), 'w', zipfile.ZIP_DEFLATED)
+                        _zip_dir(xlsx_dir, xlsx, False)
+                    except Exception:
+                        continue
+                    finally:         
+                        xlsx.close()
+                        if os.path.exists(xlsx_dir):
+                            shutil.rmtree(xlsx_dir)
 
-                    elif path.lower() == 'form.json':
-                        with open(os.path.join(zip_dir, path), 'r') as file:
-                            form_json = file.read()
+            # Add a relationship between the new survey and the service
+            for related_item in self.related_items:
+                for key, value in item_mapping['Feature Services'].items():
+                    if _compare_url(related_item['url'], key):
+                        feature_service = target.content.get(value['id'])
+                        _add_relationship(new_item, feature_service, 'Survey2Service')
+                        break
 
-                    elif os.path.splitext(path)[1].lower() == '.xlsx':
-                        xlsx = zipfile.ZipFile(os.path.join(zip_dir, path))
-                        xlsx_dir = os.path.join(zip_dir, 'xlsx')
-                        try:
-                            xlsx.extractall(xlsx_dir)
-                            xlsx.close()
+            # If the survey was authored on the web add the web_json to the metadata table in the service
+            if form_json is not None and feature_service_url is not None:
+                svc = FeatureLayerCollection(feature_service_url, target)
+                table = next((t for t in svc.tables if t.properties.name == 'metadata'), None)
+                if table is not None:
+                    deletes = table.query(where="name = 'form'")
+                    table.edit_features(adds=[{'attributes' : {'name' : 'form', 'value' : form_json}}], deletes=deletes)
 
-                            with open(os.path.join(xlsx_dir, 'xl/sharedStrings.xml'), 'r') as file:
-                                data = file.read()
+            # Zip the directory
+            zip_file = zipfile.ZipFile(form_zip, 'w', zipfile.ZIP_DEFLATED)
+            _zip_dir(zip_dir, zip_file)
+            zip_file.close()
 
-                            for key, value in item_mapping['Feature Services'].items():
-                                data = re.sub(key, value['url'], data, 0, re.IGNORECASE)
-
-                            with open(os.path.join(xlsx_dir, 'xl/sharedStrings.xml'), 'w') as file:
-                                file.write(data)
-
-                            xlsx = zipfile.ZipFile(os.path.join(zip_dir, path), 'w', zipfile.ZIP_DEFLATED)
-                            _zip_dir(xlsx_dir, xlsx, False)
-                        except Exception:
-                            continue
-                        finally:         
-                            xlsx.close()
-                            if os.path.exists(xlsx_dir):
-                                shutil.rmtree(xlsx_dir)
-
-                # Add a relationship between the new survey and the service
-                for related_item in self.related_items:
-                    for key, value in item_mapping['Feature Services'].items():
-                        if _compare_url(related_item['url'], key):
-                            feature_service = target.content.get(value['id'])
-                            _add_relationship(new_item, feature_service, 'Survey2Service')
-                            break
-
-                # If the survey was authored on the web add the web_json to the metadata table in the service
-                if form_json is not None and feature_service_url is not None:
-                    svc = FeatureLayerCollection(feature_service_url, target)
-                    table = next((t for t in svc.tables if t.properties.name == 'metadata'), None)
-                    if table is not None:
-                        deletes = table.query(where="name = 'form'")
-                        table.edit_features(adds=[{'attributes' : {'name' : 'form', 'value' : form_json}}], deletes=deletes)
-
-                # Zip the directory
-                zip_file = zipfile.ZipFile(form_zip, 'w', zipfile.ZIP_DEFLATED)
-                _zip_dir(zip_dir, zip_file)
-                zip_file.close()
-
-                # Upload the zip to the item
-                new_item.update(data=form_zip)
-            except Exception as ex:
-                raise Exception("Failed to update {0} {1}: {2}".format(new_item['type'], new_item['title'], str(ex)))
-            finally:         
-                zip_file.close()
+            # Upload the zip to the item
+            new_item.update(data=form_zip)
+        except Exception as ex:
+            raise Exception("Failed to update {0} {1}: {2}".format(new_item['type'], new_item['title'], str(ex)))
+        finally:         
+            zip_file.close()
 
 class _WorkforceProjectDefinition(_TextItemDefinition):
     """
@@ -1339,15 +1429,196 @@ class _WorkforceProjectDefinition(_TextItemDefinition):
 
             # Add the project to the target portal
             item_properties['text'] = json.dumps(workforce_json)
-            with tempfile.TemporaryDirectory() as temp_dir:
-                thumbnail = self.thumbnail
-                if not thumbnail and self.portal_item:
-                    thumbnail = self.portal_item.download_thumbnail(temp_dir)
-                new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
+            thumbnail = self.thumbnail
+            if not thumbnail and self.portal_item:
+                temp_dir = os.path.join(_TEMP_DIR.name, original_item['id'])
+                if not os.path.exists(temp_dir):
+                    os.makedirs(temp_dir)
+                thumbnail = self.portal_item.download_thumbnail(temp_dir)
+            new_item = target.content.add(item_properties=item_properties, thumbnail=thumbnail, folder=_deep_get(folder, 'title'))
 
             return [new_item]
         except Exception as ex:
             raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
+
+class _ProMapDefinition(_ItemDefinition):
+    """
+    Represents the definition of an pro map within ArcGIS Online or Portal.
+    """
+
+    def clone(self, target, folder, item_mapping):
+        """Clone the pro map in the target organization.
+        Keyword arguments:
+        target - The instance of arcgis.gis.GIS (the portal) to clone the workforce project to
+        folder - The folder to create the item in
+        item_mapping - Dictionary containing mapping between new and old items.     
+        """  
+
+        try:
+            new_item = None
+            original_item = self.info
+            mapx = self.data
+
+            map_json = None
+            with open(mapx, 'r') as file:
+                map_json = json.loads(file.read())
+
+            data_connections = []
+            layer_definitions = _deep_get(map_json, 'layerDefinitions')
+            if layer_definitions is not None:
+                for layer_definition in layer_definitions:
+                    data_connection = _deep_get(layer_definition, 'featureTable', 'dataConnection')
+                    if data_connection is not None:
+                        data_connections.append(data_connection)
+        
+            table_definitions = _deep_get(map_json, 'tableDefinitions')
+            if table_definitions is not None:
+                for table_definition in table_definitions:
+                    data_connection = _deep_get(table_definition, 'dataConnection')
+                    if data_connection is not None:
+                        data_connections.append(data_connection)
+
+            for data_connection in data_connections:
+                if 'workspaceFactory' in data_connection and data_connection['workspaceFactory'] == 'FeatureService':
+                    if 'workspaceConnectionString' in data_connection and data_connection['workspaceConnectionString'] is not None:
+                        feature_service_url = data_connection['workspaceConnectionString'][4:]
+                        for original_url in item_mapping['Feature Services']:
+                            if _compare_url(feature_service_url, original_url):
+                                new_service = item_mapping['Feature Services'][original_url]
+                                layer_id = int(data_connection['dataset'])
+                                new_id = new_service['layer_id_mapping'][layer_id]
+                                data_connection['workspaceConnectionString'] = "URL={0}".format(new_service['url'])
+                                data_connection['dataset'] = new_id
+                
+            new_mapx_dir = os.path.join(os.path.dirname(mapx), 'new_mapx')
+            os.makedirs(new_mapx_dir)
+            new_mapx = os.path.join(new_mapx_dir, os.path.basename(mapx))
+            with open(new_mapx, 'w') as file:
+                file.write(json.dumps(map_json))
+            self._data = new_mapx
+                
+            return super().clone(target, folder, item_mapping)
+        
+        except Exception as ex:
+            if isinstance(ex, _ItemCreateException):
+                raise
+            raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
+        finally:
+            self._data = mapx
+            new_mapx_dir = os.path.join(os.path.dirname(mapx), 'new_mapx')
+            if os.path.exists(new_mapx_dir):
+                shutil.rmtree(new_mapx_dir)
+
+class _ProProjectPackageDefinition(_ItemDefinition):
+    """
+    Represents the definition of an pro map within ArcGIS Online or Portal.
+    """
+
+    def clone(self, target, folder, item_mapping):
+        """Clone the pro map in the target organization.
+        Keyword arguments:
+        target - The instance of arcgis.gis.GIS (the portal) to clone the workforce project to
+        folder - The folder to create the item in
+        item_mapping - Dictionary containing mapping between new and old items.     
+        """  
+
+        try:
+            new_item = None
+            aprx = None
+            map = None
+            maps = None
+            layers = None
+            lyr = None
+            original_item = self.info
+            ppkx = self.data
+
+            if _COPY_ONLY_TAG not in original_item['tags']:
+                try:
+                    import arcpy          
+                
+                    extract_dir = os.path.join(os.path.dirname(ppkx), 'extract')
+                    if not os.path.exists(extract_dir):
+                        os.makedirs(extract_dir)
+                        arcpy.ExtractPackage_management(ppkx, extract_dir)
+
+                    project_folder = 'p20'
+                    version = float(arcpy.GetInstallInfo()['Version'])
+                    if version < 2.0:
+                        project_folder = 'p12'
+
+                    project_dir = os.path.join(extract_dir, project_folder)
+                    if os.path.exists(project_dir):
+                        aprx_files = [f for f in os.listdir(project_dir) if f.endswith('.aprx')]
+                        if len(aprx_files) == 1:
+                            service_version_infos = {}
+
+                            aprx_file = os.path.join(project_dir, aprx_files[0])
+                            aprx = arcpy.mp.ArcGISProject(aprx_file)
+                            maps = aprx.listMaps()
+                            for map in maps:
+                                layers = [l for l in map.listLayers() if l.supports('connectionProperties')]
+                                layers.extend(map.listTables())
+                                for lyr in layers:
+                                    connection_properties = lyr.connectionProperties
+                                    workspace_factory = _deep_get(connection_properties, 'workspace_factory')
+                                    service_url = _deep_get(connection_properties, 'connection_info', 'url')
+                                    if workspace_factory == 'FeatureService' and service_url is not None:
+                                        for original_url in item_mapping['Feature Services']:
+                                            if _compare_url(service_url, original_url):
+                                                new_service = item_mapping['Feature Services'][original_url]
+                                                layer_id = int(connection_properties['dataset'])
+                                                new_id = new_service['layer_id_mapping'][layer_id]
+                                                new_connection_properties = copy.deepcopy(connection_properties)
+                                                new_connection_properties['connection_info']['url'] = new_service['url']
+                                                new_connection_properties['dataset'] = str(new_id)
+
+                                                if 'version' in new_connection_properties['connection_info']:
+                                                    if new_service['url'] not in service_version_infos:
+                                                        try:
+                                                            service_version_infos[new_service['url']] = _get_version_management_server(target, new_service['url'])
+                                                        except:
+                                                            raise Exception('Failed to retrieve Version Manager from target feature layer')
+                                                    version_info = service_version_infos[new_service['url']]
+                                                    new_connection_properties['connection_info']['version'] = version_info['defaultVersionName']
+                                                    new_connection_properties['connection_info']['versionguid'] = version_info['defaultVersionGuid']
+                                                                   
+                                                lyr.updateConnectionProperties(connection_properties, new_connection_properties, validate=False)
+                            aprx.save()                        
+
+                            additional_files = None
+                            user_data = os.path.join(os.path.dirname(ppkx), 'extract', 'commondata', 'userdata')
+                            if os.path.exists(user_data):
+                                additional_files = [os.path.join(user_data, f) for f in os.listdir(user_data)]
+
+                            new_package_dir = os.path.join(os.path.dirname(ppkx), 'new_package')
+                            os.makedirs(new_package_dir)
+                            new_package = os.path.join(new_package_dir, os.path.basename(ppkx))
+                            item_properties = self._get_item_properties()
+                            description = original_item['title']
+                            if item_properties['snippet'] is not None:
+                                description = item_properties['snippet']
+
+                            arcpy.management.PackageProject(aprx_file, new_package, "INTERNAL", "PROJECT_PACKAGE", "DEFAULT", "ALL", additional_files, description, item_properties['tags'], "ALL")
+                            self._data = new_package
+
+                except ImportError:
+                    pass
+                
+            return super().clone(target, folder, item_mapping)
+        
+        except Exception as ex:
+            if isinstance(ex, _ItemCreateException):
+                raise
+            raise _ItemCreateException("Failed to create {0} {1}: {2}".format(original_item['type'], original_item['title'], str(ex)), new_item)
+        finally:
+            del aprx, map, maps, layers, lyr
+            self._data = ppkx
+            extract_dir = os.path.join(os.path.dirname(ppkx), 'extract')
+            if os.path.exists(extract_dir):
+                shutil.rmtree(extract_dir)
+            new_package_dir = os.path.join(os.path.dirname(ppkx), 'new_package')
+            if os.path.exists(new_package_dir):
+                shutil.rmtree(new_package_dir)
 
 class _ItemCreateException(Exception):
     """
@@ -1374,6 +1645,8 @@ def clone(target, item, folder_name=None, existing_items=[]):
     """  
     item_mapping = {'Item IDs' : {}, 'Group IDs' : {}, 'Feature Services' : {}}
     created_items = []
+    global _TEMP_DIR
+    _TEMP_DIR = tempfile.TemporaryDirectory()
 
     try:
         # Check if the item has already been cloned into the target portal
@@ -1445,8 +1718,13 @@ def clone(target, item, folder_name=None, existing_items=[]):
             result = []
 
             new_item = _get_existing_item(existing_items, original_item)
-            if SEARCH_ORG_FOR_EXISTING_ITEMS and new_item is None:
-                new_item = _search_org_for_existing_item(target, original_item)
+            if new_item is None:
+                if _TARGET_MUST_EXIST_TAG in original_item['tags']:
+                    new_item = _search_org_for_existing_item(target, original_item)
+                    if new_item is None:
+                        raise Exception("Failed to find {0} {1} in Organization".format(original_item['type'], original_item['title']))
+                elif SEARCH_ORG_FOR_EXISTING_ITEMS:
+                    new_item = _search_org_for_existing_item(target, original_item)
 
             if not new_item:                   
                 result = item_definition.clone(target, folder, item_mapping)
@@ -1475,39 +1753,96 @@ def clone(target, item, folder_name=None, existing_items=[]):
                 layer_field_mapping = {}
                 layer_id_mapping = {}
                 layer_fields = {}
+                relationship_field_mapping = {}
 
                 if not new_item_created:
                     new_feature_service = FeatureLayerCollection.fromitem(new_item)    
                     new_layers = new_feature_service.layers + new_feature_service.tables
                     for new_layer in new_layers:
-                        layer_fields[new_layer.properties.id] = new_layer.properties.fields
-                                     
+                        layer_fields[new_layer.properties.id] = new_layer.properties.fields                
                     original_layers_definition = item_definition.layers_definition
                     original_layers = original_layers_definition['layers'] + original_layers_definition['tables']
-                    if len(new_layers) == len(original_layers):
-                        i = 0
-                        for layer in original_layers:
-                            layer_id_mapping[layer['id']] = new_layers[i].properties['id']
-                            i += 1
+               
+                    if len(original_layers) > len(new_layers):
+                        raise Exception('{0} {1} layers and tables must match the source {0}'.format(new_item['type'], new_item['title']))
 
-                        # Get any layer field mapping saved with the feature service
-                        data = new_item.get_data()
-                        layers = []
-                        if 'layers' in data and data['layers'] is not None:
-                            layers += [layer for layer in data['layers']]
-                        if 'tables' in data and data['tables'] is not None:
-                            layers += [layer for layer in data['tables']]
-                        for layer in layers:
-                            if 'fieldMapping' in layer:
-                                for key, value in layer_id_mapping.items():
-                                    if value == layer['id']:
-                                        layer_field_mapping[key] = layer['fieldMapping']
-                                        break
+                    # Get a mapping between layer ids, fields and related fields
+                    original_layer_ids = [original_layer['id'] for original_layer in original_layers]
+                    new_layer_ids = [new_layer.properties['id'] for new_layer in new_layers]
+                    new_layer_names = [new_layer.properties['name'] for new_layer in new_layers]
+                    for layer in original_layers:
+                        try:
+                            new_layer = new_layers[new_layer_names.index(layer['name'])]
+                            layer_id_mapping[layer['id']] = new_layer.properties['id']
+                            new_layer_ids.remove(new_layer.properties['id'])
+                            original_layer_ids.remove(layer['id'])
+                        except ValueError:
+                            pass
+                    for id in original_layer_ids:
+                        layer_id_mapping[id] = new_layer_ids.pop(0)
+
+                    for original_id, new_id in layer_id_mapping.items():
+                        field_mapping = {}            
+                        for layer in original_layers:
+                            if layer['id'] == original_id:
+                                new_layer = next((l for l in new_layers if l.properties['id'] == new_id), None)
+                                original_fields = _deep_get(layer, 'fields')
+                                new_fields = _deep_get(new_layer.properties, 'fields')
+                                if new_fields is None or original_fields is None:
+                                    continue
+                                new_fields_lower = [f['name'].lower() for f in new_fields]
+
+                                if 'editFieldsInfo' in layer and layer['editFieldsInfo'] is not None:                            
+                                    if 'editFieldsInfo' in new_layer.properties and new_layer.properties['editFieldsInfo'] is not None:
+                                        for editor_field in ['creationDateField', 'creatorField', 'editDateField', 'editorField']:
+                                            original_editor_field_name = _deep_get(layer, 'editFieldsInfo', editor_field)
+                                            new_editor_field_name = _deep_get(new_layer.properties, 'editFieldsInfo', editor_field)
+                                            if original_editor_field_name !=  new_editor_field_name:
+                                                if original_editor_field_name is not None and original_editor_field_name != "" and new_editor_field_name is not None and new_editor_field_name != "":
+                                                    field_mapping[original_editor_field_name] = new_editor_field_name
+
+                                original_oid_field = _deep_get(layer, 'objectIdField')
+                                new_oid_field = _deep_get(new_layer.properties, 'objectIdField')
+                                if original_oid_field != new_oid_field:
+                                    if original_oid_field is not None and original_oid_field != "" and new_oid_field is not None and new_oid_field != "":
+                                        field_mapping[original_oid_field] = new_oid_field
+
+                                original_globalid_field = _deep_get(layer, 'globalIdField')
+                                new_globalid_field = _deep_get(new_layer.properties, 'globalIdField')
+                                if original_globalid_field != new_globalid_field:
+                                    if original_globalid_field is not None and original_globalid_field != "" and new_globalid_field is not None and new_globalid_field != "":
+                                        field_mapping[original_globalid_field] = new_globalid_field
+
+                                for field in original_fields:
+                                    if field['name'] in field_mapping:
+                                        continue
+                                    try:
+                                        new_field = new_fields[new_fields_lower.index(field['name'].lower())]
+                                        if field['name'] != new_field['name']:
+                                            field_mapping[field['name']] = new_field['name']
+                                    except ValueError:
+                                        pass    
+                                break
+                        if len(field_mapping) > 0:
+                            layer_field_mapping[original_id] = field_mapping
+
+                    for layer in original_layers:
+                        layer_id = layer['id']
+                        if 'relationships' in layer and layer['relationships'] is not None:
+                            for relationship in layer['relationships']:
+                                related_table_id = relationship['relatedTableId']
+                                if related_table_id in layer_field_mapping:
+                                    if layer_id not in relationship_field_mapping:
+                                        relationship_field_mapping[layer_id] = {}
+                                    field_mapping = layer_field_mapping[related_table_id]
+                                    relationship_field_mapping[layer_id][relationship['id']] = field_mapping
+
                 else:
                     layer_field_mapping = result[1]
                     layer_id_mapping = result[2]  
                     layer_fields = result[3]
-                item_mapping['Feature Services'][original_item['url']] = {'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping, 'layer_id_mapping' : layer_id_mapping, 'layer_fields' : layer_fields}           
+                    relationship_field_mapping = result[4]
+                item_mapping['Feature Services'][original_item['url']] = {'id' : new_item['id'], 'url' : new_item['url'], 'layer_field_mapping' : layer_field_mapping, 'layer_id_mapping' : layer_id_mapping, 'layer_fields' : layer_fields, 'relationship_field_mapping' : relationship_field_mapping}           
 
         # Update form data
         for form in [i for i in item_definitions if isinstance(i, _FormDefinition)]:
@@ -1552,6 +1887,8 @@ def clone(target, item, folder_name=None, existing_items=[]):
         _add_message('Failed to add {0}'.format(item['title']), 'Error')
         _add_message('------------------------')
         return []
+    finally:
+        _TEMP_DIR.cleanup()
 
 #endregion
 
@@ -1587,28 +1924,35 @@ def _get_item_definitions(item, item_definitions):
             if item_definition is not None:
                 item_definition.sharing['groups'].append(group_id)
 
+    # If the item is has the copy-only tag than we don't need to do a deep clone, just copy the item as is
+    elif _COPY_ONLY_TAG in item['tags']:
+        item_definition = _get_item_definition(item)
+        item_definitions.append(item_definition)
+
     # If the item is an application or dashboard find the web map or group that the application referencing
-    elif item['type'] in ['Web Mapping Application', 'Operation View']:
+    elif item['type'] in ['Web Mapping Application', 'Operation View', 'Dashboard']:
         item_definition = _get_item_definition(item)
         item_definitions.append(item_definition)
    
-        webmap_id = None
+        webmap_ids = []
         app_json = item_definition.data 
         if app_json is not None:     
             if 'Story Map' in item['typeKeywords'] or 'Story Maps' in item['typeKeywords']:
-                webmap_id = None
+                webmap_ids = []
 
-            elif item['type'].lower() == "operation view": #Operations Dashboard
+            elif item['type'] in ["Operation View", "Dashboard"]: #Operations Dashboard
                 if 'widgets' in app_json:
                     for widget in app_json['widgets']:
                         if widget['type'] == 'mapWidget':
-                            webmap_id = widget['mapId']
-                            break
+                            if 'itemId' in widget:
+                                webmap_ids.append(widget['itemId'])
+                            elif 'mapId' in widget:
+                                webmap_ids.append(widget['mapId'])
 
             elif "Web AppBuilder" in item['typeKeywords']: #Web AppBuilder
                 if 'map' in app_json:
                     if 'itemId' in app_json['map']:
-                        webmap_id = app_json['map']['itemId']
+                        webmap_ids.append(app_json['map']['itemId'])
 
             else: #Configurable Application Template
                 if 'values' in app_json:
@@ -1622,9 +1966,12 @@ def _get_item_definitions(item, item_definitions):
                         _get_item_definitions(group, item_definitions)
 
                     if 'webmap' in app_json['values']:
-                        webmap_id = app_json['values']['webmap']
+                        if isinstance(app_json['values']['webmap'], list):
+                            webmap_ids.extend(app_json['values']['webmap'])
+                        else:
+                            webmap_ids.append(app_json['values']['webmap'])
         
-        if webmap_id:
+        for webmap_id in webmap_ids:
             try:
                 webmap = source.content.get(webmap_id)
             except RuntimeError:
@@ -1649,25 +1996,11 @@ def _get_item_definitions(item, item_definitions):
 
         for layer in featurelayer_services:
             service_url = os.path.dirname(layer['url'])
-            feature_service = next((definition for definition in item_definitions if 'url' in definition.info and definition.info['url'] == service_url), None)
+            feature_service = next((definition for definition in item_definitions if 'url' in definition.info and _compare_url(definition.info['url'], service_url)), None)
             if not feature_service:
-                try:
-                    service = FeatureLayerCollection(service_url, source)               
-                except Exception:
-                    _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                    continue
-
-                if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
-                    _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
-                    continue
-
-                try:
-                    item_id = service.properties['serviceItemId']
-                    feature_service = source.content.get(item_id)
-                except RuntimeError:
-                    _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
-                    raise
-                _get_item_definitions(feature_service, item_definitions)
+                feature_service = _get_feature_service_related_item(service_url, source)
+                if feature_service:
+                    _get_item_definitions(feature_service, item_definitions)
 
         for feature_collection in feature_collections:
             if 'itemId' in feature_collection and feature_collection['itemId'] is not None:
@@ -1716,7 +2049,8 @@ def _get_item_definitions(item, item_definitions):
                     else:
                         raise Exception(multiple_source_error)
                     view_sources[layer.properties['id']] = layer_source['url']
-                    view_source_fields[layer.properties['id']] = layer.properties.fields
+                    feature_layer = FeatureLayer(layer_source['url'], source)
+                    view_source_fields[layer.properties['id']] = feature_layer.properties.fields
             except RuntimeError:
                 _add_message("Failed to get feature layer view and its sources {0}".format(item['id']), 'Error')
                 raise
@@ -1775,6 +2109,87 @@ def _get_item_definitions(item, item_definitions):
         for related_item in item_definition.related_items:
             _get_item_definitions(source.content.get(related_item['id']), item_definitions)
 
+    # If the item is a pro map find the feature services that supports it
+    elif item['type'] == 'Pro Map':
+        item_definition = _get_item_definition(item)
+        item_definitions.append(item_definition)
+
+        map_json = None
+        with open(item_definition.data, 'r') as file:
+            map_json = json.loads(file.read())
+
+        data_connections = []
+        layer_definitions = _deep_get(map_json, 'layerDefinitions')
+        if layer_definitions is not None:
+            for layer_definition in layer_definitions:
+                data_connection = _deep_get(layer_definition, 'featureTable', 'dataConnection')
+                if data_connection is not None:
+                    data_connections.append(data_connection)
+        
+        table_definitions = _deep_get(map_json, 'tableDefinitions')
+        if table_definitions is not None:
+            for table_definition in table_definitions:
+                data_connection = _deep_get(table_definition, 'dataConnection')
+                if data_connection is not None:
+                    data_connections.append(data_connection)
+
+        for data_connection in data_connections:
+            if 'workspaceFactory' in data_connection and data_connection['workspaceFactory'] == 'FeatureService':
+                if 'workspaceConnectionString' in data_connection and data_connection['workspaceConnectionString'] is not None:
+                    service_url = data_connection['workspaceConnectionString'][4:]
+                    feature_service = next((definition for definition in item_definitions if 'url' in definition.info and _compare_url(definition.info['url'], service_url)), None)
+                    if not feature_service:
+                        feature_service = _get_feature_service_related_item(service_url, source)
+                        if feature_service:
+                            _get_item_definitions(feature_service, item_definitions)
+
+    # If the item is a pro project find the feature services that supports it
+    elif item['type'] == 'Project Package':
+        item_definition = _get_item_definition(item)
+        item_definitions.append(item_definition)
+
+        try:
+            import arcpy
+            ppkx = item_definition.data
+            extract_dir = os.path.join(os.path.dirname(ppkx), 'extract')
+            if not os.path.exists(extract_dir):
+                os.makedirs(extract_dir)
+
+            arcpy.ExtractPackage_management(ppkx, extract_dir)
+            
+            project_folder = 'p20'
+            version = float(arcpy.GetInstallInfo()['Version'])
+            if version < 2.0:
+                project_folder = 'p12'
+
+            project_dir = os.path.join(extract_dir, project_folder)
+            if os.path.exists(project_dir):
+                aprx_files = [f for f in os.listdir(project_dir) if f.endswith('.aprx')]
+                if len(aprx_files) == 1:
+                    aprx_file = os.path.join(project_dir, aprx_files[0])
+                    aprx = arcpy.mp.ArcGISProject(aprx_file)
+                    maps = aprx.listMaps()
+                    for map in maps:
+                        layers = [l for l in map.listLayers() if l.supports('connectionProperties')]
+                        layers.extend(map.listTables())
+                        for lyr in layers:
+                            connection_properties = lyr.connectionProperties
+                            workspace_factory = _deep_get(connection_properties, 'workspace_factory')
+                            service_url = _deep_get(connection_properties, 'connection_info', 'url')
+                            if workspace_factory == 'FeatureService' and service_url is not None:
+                                feature_service = next((definition for definition in item_definitions if 'url' in definition.info and _compare_url(definition.info['url'], service_url)), None)
+                                if not feature_service:
+                                    feature_service = _get_feature_service_related_item(service_url, source)
+                                    if feature_service:
+                                        _get_item_definitions(feature_service, item_definitions)
+            
+        except ImportError:
+            pass
+
+    # If the item is a code attachment ignore it
+    elif item['type'] == 'Code Attachment':
+        pass
+
     # All other types we no longer need to recursively look for related items
     else:
         item_definition = _get_item_definition(item)
@@ -1795,7 +2210,7 @@ def _get_item_definition(item):
     """  
        
     # If the item is an application or dashboard get the ApplicationDefinition
-    if item['type'] in ['Web Mapping Application', 'Operation View']:
+    if item['type'] in ['Web Mapping Application', 'Operation View', 'Dashboard']:
         app_json = None
         source_app_title = None
         update_url = False
@@ -1855,11 +2270,52 @@ def _get_item_definition(item):
     elif item['type'] == 'Feature Collection':
         return _FeatureCollectionDefinition(dict(item), data=item.get_data(), thumbnail=None, portal_item=item)
 
+    # If the item is a pro map get the ProMapDefintion
+    elif item['type'] == 'Pro Map':
+        temp_dir = os.path.join(_TEMP_DIR.name, item['id'])
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+        pro_map = item.download(temp_dir)
+        return _ProMapDefinition(dict(item), data=pro_map, thumbnail=None, portal_item=item)
+
+    # If the item is a pro package get the ProProjectPackageDefintion
+    elif item['type'] == 'Project Package':
+        temp_dir = os.path.join(_TEMP_DIR.name, item['id'])
+        if not os.path.exists(temp_dir):
+            os.makedirs(temp_dir)
+        pro_package = item.download(temp_dir)
+        return _ProProjectPackageDefinition(dict(item), data=pro_package, thumbnail=None, portal_item=item)
+
     # For all other types get the corresponding definition
     else:
         if item['type'] in _TEXT_BASED_ITEM_TYPES:
             return _TextItemDefinition(dict(item), data=item.get_data(), thumbnail=None, portal_item=item)
         return _ItemDefinition(dict(item), data=None, thumbnail=None, portal_item=item)
+
+def _get_feature_service_related_item(service_url, source):
+    try:
+        service = FeatureLayerCollection(service_url, source)               
+    except Exception:
+        _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
+        return
+
+    item_id = None
+    if 'serviceItemId' not in service.properties or service.properties['serviceItemId'] is None:
+        document_info = _deep_get(service.properties, 'documentInfo')
+        if document_info is not None:
+            item_ids = re.findall('serviceitemid:[0-9A-F]{32}', json.dumps(document_info), re.IGNORECASE)
+            if len(item_ids) > 0:
+                item_id = item_ids[0][len('serviceitemid:'):]
+    else:
+        item_id = service.properties['serviceItemId']
+
+    try:
+        if item_id is not None:
+            return source.content.get(item_id)
+        _add_message("Feature layer {0} is not a hosted feature service. It will not be cloned.".format(service_url), 'Warning')
+    except RuntimeError:
+        _add_message("Failed to get feature service item {0}".format(item_id), 'Error')
+        raise
 
 def _add_message(message, message_type='Info'):
     """Add a message to the output"""
@@ -1874,33 +2330,50 @@ def _add_message(message, message_type='Info'):
     except ImportError:
         print(message)
 
-def _get_extent_definition(extent):
+def _get_extent_definition(original_extent, item_extent, new_spatial_ref):
     """Get the extent definition for the feature service based on the user specified extent and spatial reference. 
-    This function required the arcpy module to project the specified or default extent into the specified spatial reference.
-    If the module is not availble or if neither the ITEM_EXTENT or SPATIAL_REFERENCE are specified the default service extent will be returned.
+    This function requires the arcpy module to project the specified or default extent into the specified spatial reference.
+    If the module is not available or if neither the ITEM_EXTENT or SPATIAL_REFERENCE are specified the default service extent will be returned.
     extent - The json representation of an extent.""" 
     
     try:
-        if ITEM_EXTENT is None and SPATIAL_REFERENCE is None:
+        extent = original_extent
+        if item_extent is None and new_spatial_ref is None:
             return extent
 
         import arcpy
-        wkid = extent['spatialReference']['wkid']
-        if SPATIAL_REFERENCE is not None:
-            wkid = SPATIAL_REFERENCE
 
-        if ITEM_EXTENT is not None:
-            item_extent = ITEM_EXTENT.split(",")
-            extent = {"xmin" : item_extent[0], "ymin" : item_extent[1], "xmax" : item_extent[2], "ymax" : item_extent[3], "spatialReference" : {'wkid': 4326}}
+        new_extent = original_extent
+        if item_extent is not None:
+            extent_list = item_extent.split(",")
+            new_extent = {"xmin" : extent_list[0], "ymin" : extent_list[1], "xmax" : extent_list[2], "ymax" : extent_list[3], "spatialReference" : {'wkid': 4326}}
 
-        coordinates = [[extent['xmin'], extent['ymin']], 
-                       [extent['xmax'], extent['ymin']], 
-                       [extent['xmax'], extent['ymax']], 
-                       [extent['xmin'], extent['ymax']], 
-                       [extent['xmin'], extent['ymin']]]
-        polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), arcpy.SpatialReference(extent['spatialReference']['wkid']))
-        new_extent = polygon.extent.projectAs(arcpy.SpatialReference(wkid))
-        extent = {"xmin" : new_extent.XMin, "ymin" : new_extent.YMin, "xmax" : new_extent.XMax, "ymax" : new_extent.YMax, "spatialReference" : {'wkid': wkid}}
+        coordinates = [[new_extent['xmin'], new_extent['ymin']], 
+                       [new_extent['xmax'], new_extent['ymin']], 
+                       [new_extent['xmax'], new_extent['ymax']], 
+                       [new_extent['xmin'], new_extent['ymax']], 
+                       [new_extent['xmin'], new_extent['ymin']]]
+
+        original_sr = arcpy.SpatialReference()
+        if 'wkid' in new_extent['spatialReference']:
+            original_sr = arcpy.SpatialReference(new_extent['spatialReference']['wkid'])
+        elif 'wkt' in new_extent['spatialReference']:
+            original_sr.loadFromString(new_extent['spatialReference']['wkt'])
+
+        polygon = arcpy.Polygon(arcpy.Array([arcpy.Point(*coords) for coords in coordinates]), original_sr)
+
+        spatial_reference = original_extent['spatialReference']
+        if new_spatial_ref is not None:
+            spatial_reference =  {'wkid': new_spatial_ref}
+
+        new_sr = arcpy.SpatialReference()
+        if 'wkid' in spatial_reference:
+            new_sr = arcpy.SpatialReference(spatial_reference['wkid'])
+        elif 'wkt' in spatial_reference:
+            new_sr.loadFromString(spatial_reference['wkt'])
+
+        extent_geometry = polygon.extent.projectAs(new_sr)
+        extent = {"xmin" : extent_geometry.XMin, "ymin" : extent_geometry.YMin, "xmax" : extent_geometry.XMax, "ymax" : extent_geometry.YMax, "spatialReference" : spatial_reference}
 
     except ImportError:
         pass
@@ -1908,14 +2381,16 @@ def _get_extent_definition(extent):
     return extent
 
 def _search_org_for_existing_item(target, item):
-    """Test if an item with a given source tag already exists in the collection of items within a given folder. 
+    """Search for an item with a specific type keyword or tag. 
     This is used to determine if the item has already been cloned in the folder.
     Keyword arguments:
     target - The portal that items will be cloned to.
     item - The original item used to determine if it has already been cloned to the specified folder."""  
    
-    search_query = 'typekeywords:source-{0}'.format(item['id']) 
+    search_query = 'typekeywords:source-{0} type:{1}'.format(item['id'], item['type'])  
     items = target.content.search(search_query, max_items=100, outside_org=False)
+    search_query = 'tags:source-{0} type:{1}'.format(item['id'], item['type']) 
+    items.extend(target.content.search(search_query, max_items=100, outside_org=False))
     existing_item = None
     if len(items) > 0:
         existing_item = max(items, key=lambda x: x['created'])
@@ -2006,6 +2481,22 @@ def _create_service(target, service_type, create_params, is_view, folder):
         return target.content.get(resp['itemId'])
     return None
 
+def _add_to_definition(feature_layer_manager, definition):
+    """Create a new service.
+    Keyword arguments:
+    feature_layer_manager - The instance of FeatureLayerManager of the service to edit
+    definition - The definition as a string to add to the service"""
+    
+    params = {
+        "f": "json",
+        "addToDefinition": definition,
+    }
+    u_url = feature_layer_manager._url + "/addToDefinition"
+
+    res = feature_layer_manager._con.post(u_url, params)
+    feature_layer_manager.refresh()
+    return res
+
 def _get_related_items(item, rel_type, direction="forward"):
     """Get the related items for a given item.
     Keyword arguments:
@@ -2038,6 +2529,17 @@ def _add_relationship(origin_item, destination_item, rel_type):
     path = 'content/users/' + origin_item.owner
     path += '/addRelationship'
     origin_item._gis._portal.con.post(path, postdata)
+
+def _get_version_management_server(target, feature_service):
+    """Gets the url of the portal/org
+    Keyword arguments:
+    target - The portal/org to get the url for.
+    feature_service - The url to the feature_service in the portal to retrieve the Version Manager info."""
+
+    postdata = {'f' : 'json'}
+    path = os.path.dirname(feature_service)
+    path += '/VersionManagementServer'
+    return target._portal.con.post(path, postdata)
 
 def _get_org_url(target):
     """Gets the url of the portal/org
@@ -2262,6 +2764,57 @@ def _update_layer_fields(layer, field_mapping):
         if 'parameterizedExpression' in layer['definitionEditor'] and layer['definitionEditor']['parameterizedExpression'] is not None:
             layer['definitionEditor']['parameterizedExpression'] = _find_and_replace_fields(layer['definitionEditor']['parameterizedExpression'], field_mapping)
 
+def _update_layer_related_fields(layer, relationship_field_mapping):
+    """Perform a find and replace for field names in a layer definition.
+    Keyword arguments:
+    layer - The layer to search and replace fields names
+    field_mapping -  A dictionary containing the pairs of original field names and new field names"""
+   
+    for id, field_mapping in relationship_field_mapping.items():
+        field_prefix = "relationships/{0}/".format(id)
+
+        if 'popupInfo' in layer and layer['popupInfo'] is not None:
+            if 'title' in layer['popupInfo'] and layer['popupInfo']['title'] is not None:
+                results = re.findall("{{{0}(.*?)}}".format(field_prefix), layer['popupInfo']['title'])
+                for result in results:
+                    if result in field_mapping:
+                        layer['popupInfo']['title'] = str(layer['popupInfo']['title']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+                
+            if 'description' in layer['popupInfo'] and layer['popupInfo']['description'] is not None:
+                results = re.findall("{{{0}(.*?)}}".format(field_prefix), layer['popupInfo']['description'])
+                for result in results:
+                    if result in field_mapping:
+                        layer['popupInfo']['description'] = str(layer['popupInfo']['description']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+
+            if 'fieldInfos' in layer['popupInfo'] and layer['popupInfo']['fieldInfos'] is not None:
+                for field in layer['popupInfo']['fieldInfos']:
+                    if field['fieldName'].startswith(field_prefix) and field['fieldName'][len(field_prefix):] in field_mapping:
+                        field['fieldName'] = "{0}{1}".format(field_prefix, field_mapping[field['fieldName'][len(field_prefix):]])
+
+            if 'mediaInfos' in layer['popupInfo'] and layer['popupInfo']['mediaInfos'] is not None:
+                for media_info in layer['popupInfo']['mediaInfos']:
+                    if 'title' in media_info and media_info['title'] is not None:
+                        results = re.findall("{{{0}(.*?)}}".format(field_prefix), media_info['title'])
+                        for result in results:
+                            if result in field_mapping:
+                                media_info['title'] = str(media_info['title']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+                    if 'caption' in media_info and media_info['caption'] is not None:
+                        results = re.findall("{{{0}(.*?)}}".format(field_prefix), media_info['caption'])
+                        for result in results:
+                            if result in field_mapping:
+                                media_info['caption'] = str(media_info['caption']).replace("{{{0}{1}}}".format(field_prefix, result), "{{{0}{1}}}".format(field_prefix, field_mapping[result]))
+                    if 'normalizeField' in media_info and media_info['normalizeField'] is not None:
+                        if media_info['normalizeField'].startswith(field_prefix) and media_info['normalizeField'] in field_mapping:
+                            media_info['normalizeField'] = "{0}{1}".format(field_prefix, field_mapping[media_info['normalizeField'][len(field_prefix):]])
+                    if 'fields' in media_info and media_info['fields'] is not None:
+                        for field in media_info['fields']:
+                            fields = []
+                            if field.startswith(field_prefix) and field[len(field_prefix):] in field_mapping:
+                                fields.append("{0}{1}".format(field_prefix, field_mapping[field[len(field_prefix):]]))
+                            else:
+                                fields.append(field)
+                        media_info['fields'] = fields
+
 def _zip_dir(path, zip_file, include_root=True):
     """Zip a directory of files.
     Keyword arguments:
@@ -2287,6 +2840,11 @@ def _deep_get(dictionary, *keys):
     return reduce(lambda d, key: d.get(key) if d else None, keys, dictionary)
 
 #endregion
+
+_COPY_ONLY_TAG = 'copy-only'
+_TARGET_MUST_EXIST_TAG = 'target-must-exist'
+_MAINTAIN_SPATIAL_REF = 'maintain-spatial-ref'
+_TEMP_DIR = None
 
 _TEXT_BASED_ITEM_TYPES = ['Web Map', 'Feature Service', 'Map Service', 'Operation View',
                           'Image Service', 'Feature Collection', 'Feature Collection Template',
