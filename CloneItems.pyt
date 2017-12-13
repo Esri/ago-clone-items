@@ -136,7 +136,7 @@ class CloneItems(object):
         password = parameters[2].valueAsText
         source = None
         try:
-            source = gis.GIS(source, username, password)
+            source = gis.GIS(source_url, username, password)
         except ImportError:
             arcpy.AddError("Unable to connect to the source portal.\nIf you are using IWA authentication the pywin32 and kerberos-sspi packages are required.\nPlease install them using the following command:\n\tconda install kerberos-sspi\n")
         except:
