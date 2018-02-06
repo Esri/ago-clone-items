@@ -1573,15 +1573,17 @@ class _ProProjectPackageDefinition(_ItemDefinition):
                                                 new_connection_properties['connection_info']['url'] = new_service['url']
                                                 new_connection_properties['dataset'] = str(new_id)
 
-                                                if 'version' in new_connection_properties['connection_info']:
-                                                    if new_service['url'] not in service_version_infos:
-                                                        try:
-                                                            service_version_infos[new_service['url']] = _get_version_management_server(target, new_service['url'])
-                                                        except:
-                                                            raise Exception('Failed to retrieve Version Manager from target feature layer')
-                                                    version_info = service_version_infos[new_service['url']]
-                                                    new_connection_properties['connection_info']['version'] = version_info['defaultVersionName']
-                                                    new_connection_properties['connection_info']['versionguid'] = version_info['defaultVersionGuid']
+                                                if new_service['url'] not in service_version_infos:
+                                                    try:
+                                                        service_version_infos[new_service['url']] = _get_version_management_server(target, new_service['url'])
+                                                    except:
+                                                        service_version_infos[new_service['url']] = {}
+                                                version_info = service_version_infos[new_service['url']]
+                                                for key, value in {'defaultVersionName' : 'version', 'defaultVersionGuid': 'versionguid'}.items():
+                                                    if key in version_info:
+                                                        new_connection_properties['connection_info'][value] = version_info[key]
+                                                    elif value in new_connection_properties['connection_info']:
+                                                        del new_connection_properties['connection_info'][value]
                                                                    
                                                 lyr.updateConnectionProperties(connection_properties, new_connection_properties, validate=False)
                             aprx.save()                        
