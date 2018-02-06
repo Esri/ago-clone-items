@@ -2157,10 +2157,11 @@ def _get_item_definitions(item, item_definitions):
                 os.makedirs(extract_dir)
 
             arcpy.ExtractPackage_management(ppkx, extract_dir)
-            
+
+            # 1.x versions of Pro use a different folder name
             project_folder = 'p20'
-            version = float(arcpy.GetInstallInfo()['Version'])
-            if version < 2.0:
+            version = arcpy.GetInstallInfo()['Version']
+            if version.startswith('1'):
                 project_folder = 'p12'
 
             project_dir = os.path.join(extract_dir, project_folder)
