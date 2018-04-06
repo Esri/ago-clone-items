@@ -1,41 +1,5 @@
 # ago-clone-items
-Clone items between ArcGIS Online and ArcGIS Enterprise organizations.
-
-This script and associated tool can be used to clone an item and its dependencies to the same or another ArcGIS Organization. For example if you clone a hosted web application created using Web AppBuilder or a Configurable App Template, the script will find the web map that is used by that web application and all the hosted feature layers used in the web map. It will then clone all of these items to the new organization and swizzle the paths in the web map and web application to point to the new layers. This creates a completely disconnected copy of the application, map and layers in the organization.
-
-[Learn more](../../wiki) about the supported item types and considerations for the script.
-
-## Features
-
-* A [python module](clone_items.py) that can be used to clone items within an ArcGIS Online or ArcGIS Enterprise organization or between organizations.
-* An [example script](example.py) that demonstrates how you can clone items between ArcGIS organizations from a standalone script.
-* A [python toolbox](CloneItems.pyt) that provides a geoprocessing tool that can be used to clone items from an ArcGIS organization to the active Portal within ArcGIS Pro.
-
-## Requirements
-
-* [ArcGIS API for Python (minimum version 1.2)](https://developers.arcgis.com/python/)
-* ArcGIS Online or ArcGIS Enterprise
-* ArcGIS Pro (optional)
-
-## Instructions
-
-1. [Install the ArcGIS API for Python](https://developers.arcgis.com/python/guide/install-and-set-up/).
-2. Download or Clone this repo.
-3. Run the script.
-   * As a standalone script, see the [example script](example.py) as a starting point.
-   * From ArcGIS Pro as a script tool using the [CloneItems](CloneItems.pyt) toolbox. 
-     * Within ArcGIS Pro select Add Toolbox from the Insert tab > Toolbox menu and browse to the CloneItems.pyt.
-     * From the Analysis tab click Tools
-     * From the Geoprocessing pane search for 'Clone Items' and open the Clone Items tool.
-     * [Learn more](../../wiki#clone-items-tool) about the tool and its parameters.
-
-## Issues
-
-Find a bug or want to request a new feature?  Please let us know by submitting an issue.
-
-## Contributing
-
-Esri welcomes contributions from anyone and everyone. Please see our [guidelines for contributing](https://github.com/esri/contributing).
+This code is no longer being maintained or enhanced as this functionality has moved to the [ArcGIS API for Python](https://developers.arcgis.com/python/). You can now access this capability from the [clone_items function](https://esri.github.io/arcgis-python-api/apidoc/html/arcgis.gis.toc.html#arcgis.gis.ContentManager.clone_items) on the GIS object's ContentManager. Bug fixes and enhancements will occur in subsequent releases of the ArcGIS API for Python.
 
 ## Licensing
 
